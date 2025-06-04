@@ -8,3 +8,6 @@ multi-downloads/
 uploads/
 video-info/
 videos/
+
+backend/node_modules/
+video-downloader/node_modules/
