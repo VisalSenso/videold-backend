@@ -618,9 +618,12 @@ app.post(
 );
 
 // Serve frontend for all non-API, non-static routes (must be last!)
+app.use(express.static(path.join(__dirname, "video-downloader/dist")));
+
 app.get(/^\/(?!api\/).*/, (req, res) => {
-  res.sendFile(path.join(__dirname, "../video-downloader/dist/index.html"));
+  res.sendFile(path.join(__dirname, "video-downloader/dist/index.html"));
 });
+
 
 server.listen(PORT, () => {
   console.log(`✅ Backend running at http://localhost:${PORT}`);
