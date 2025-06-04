@@ -14,7 +14,6 @@ const rateLimit = require("express-rate-limit");
 const { body, validationResult } = require("express-validator");
 
 const app = express();
-const PORT = 4000;
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -50,8 +49,8 @@ app.use(limiter);
 // Serve frontend static files
 app.use(express.static(path.join(__dirname, "../video-downloader/dist")));
 
-// Handle frontend routing
-app.get("*", (req, res) => {
+// Handle frontend routing for non-API routes only
+app.get(/^\/(?!api\/).*/, (req, res) => {
   res.sendFile(path.join(__dirname, "../video-downloader/dist/index.html"));
 });
 
