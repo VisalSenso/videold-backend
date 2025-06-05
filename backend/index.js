@@ -24,7 +24,7 @@ const ytDlpWrap = new YtDlpWrap(ytDlpPath);
 
 const app = express();
 // Keep only if you're behind a proxy like Render or NGINX
-app.set('trust proxy', true); 
+app.set('trust proxy', 1); 
 
 const PORT = process.env.PORT || 3000;
 
@@ -56,7 +56,6 @@ const limiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  trustProxy: true,
 });
 app.use(limiter);
 
