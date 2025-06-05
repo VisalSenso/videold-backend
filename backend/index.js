@@ -14,6 +14,7 @@ const rateLimit = require("express-rate-limit");
 const { body, validationResult } = require("express-validator");
 
 const app = express();
+app.set('trust proxy', true);
 
 const PORT = process.env.PORT || 3000;
 
@@ -34,7 +35,6 @@ io.on("connection", (socket) => {
 });
 
 const ytDlpWrap = new YtDlpWrap();
-
 app.use(cors());
 app.use(bodyParser.json());
 
