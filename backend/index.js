@@ -311,13 +311,17 @@ app.get('/api/proxy', async (req, res) => {
     const response = await fetch(url);
     if (!response.ok) return res.status(502).send('Bad upstream response');
 
-    // Copy headers like content-type
-    res.set('Content-Type', response.headers.get('content-type'));
-    response.body.pipe(res);
+    const contentType = response.headers.get('content-type');
+    const buffer = await response.buffer(); // 👈 convert to buffer
+
+    res.set('Content-Type', contentType);
+    res.send(buffer);
   } catch (err) {
+    console.error('Proxy fetch error:', err);
     res.status(500).send('Proxy error');
   }
 });
+
 
 // API: initialize download, return formats + downloadId + filename
 app.get('/api/proxy', async (req, res) => {
