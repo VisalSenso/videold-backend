@@ -12,16 +12,26 @@ const { Server } = require("socket.io");
 const archiver = require("archiver");
 const rateLimit = require("express-rate-limit");
 const { body, validationResult } = require("express-validator");
+const os = require("os");
+
+const isWindows = os.platform() === "win32";
+
+const ytDlpPath = isWindows
+  ? path.resolve(__dirname, "bin", "yt-dlp.exe")
+  : path.resolve(__dirname, "bin", "yt-dlp");
+
+const ytDlpWrap = new YtDlpWrap(ytDlpPath);
 
 const app = express();
-app.set('trust proxy', true);
+// Keep only if you're behind a proxy like Render or NGINX
+app.set('trust proxy', true); 
 
 const PORT = process.env.PORT || 3000;
 
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "*", // Adjust in production
+    origin: "*",
   },
 });
 
@@ -34,19 +44,22 @@ io.on("connection", (socket) => {
   });
 });
 
-const ytDlpWrap = new YtDlpWrap();
 app.use(cors());
 app.use(bodyParser.json());
 
-// Rate limiting: 30 requests from the same IP in 10 minutes
+// ✅ Fix for rate-limit trust proxy validation
 const limiter = rateLimit({
-  windowMs: 10 * 60 * 1000, // 10 minutes
+  windowMs: 10 * 60 * 1000,
   max: 30,
   message: {
     error: "Too many requests from this IP, please try again later.",
   },
+  standardHeaders: true,
+  legacyHeaders: false,
+  trustProxy: true,
 });
 app.use(limiter);
+
 
 // Serve frontend static files
 app.use(express.static(path.join(__dirname, "../video-downloader/dist")));
