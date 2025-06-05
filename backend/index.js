@@ -300,6 +300,22 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
   }
 }
 
+app.get('/api/proxy', async (req, res) => {
+  const url = req.query.url;
+  if (!url) return res.status(400).send('Missing url');
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return res.status(502).send('Bad upstream response');
+
+    // Copy headers like content-type
+    res.set('Content-Type', response.headers.get('content-type'));
+    response.body.pipe(res);
+  } catch (err) {
+    res.status(500).send('Proxy error');
+  }
+});
+
 // API: initialize download, return formats + downloadId + filename
 app.post(
   "/api/init-download",
