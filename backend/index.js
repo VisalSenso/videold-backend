@@ -346,6 +346,10 @@ app.post(
   }
 );
 
+app.get("/api/ping", (req, res) => {
+  res.send("Backend is alive!");
+});
+
 // API: download video (or metadata if no quality specified)
 app.post(
   "/api/downloads",
@@ -624,7 +628,7 @@ app.get(/^\/(?!api\/).*/, (req, res) => {
   res.sendFile(path.join(__dirname, "../video-downloader/dist/index.html"));
 });
 
-
+// Start the server
 server.listen(PORT, () => {
   console.log(`✅ Backend running at http://localhost:${PORT}`);
 });
