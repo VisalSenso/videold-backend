@@ -56,6 +56,7 @@ const limiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+
 });
 app.use(limiter);
 
@@ -299,7 +300,6 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
     throw err;
   }
 }
-
 
 // API: initialize download, return formats + downloadId + filename
 app.post(
