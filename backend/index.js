@@ -13,7 +13,8 @@ const archiver = require("archiver");
 const rateLimit = require("express-rate-limit");
 const { body, validationResult } = require("express-validator");
 const os = require("os");
-const fetch = require("node-fetch");
+const fetch = require("node-fetch"); // ✅ make sure this is at the top
+
 
 
 const isWindows = os.platform() === "win32";
@@ -319,62 +320,22 @@ app.get('/api/proxy', async (req, res) => {
 });
 
 // API: initialize download, return formats + downloadId + filename
-app.post(
-  "/api/init-download",
-  body("url")
-    .custom(isValidVideoUrl)
-    .withMessage("Invalid or unsupported video URL."),
-  async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ error: errors.array()[0].msg });
-    }
+app.get('/api/proxy', async (req, res) => {
+  const url = req.query.url;
+  if (!url) return res.status(400).send('Missing url');
 
-    try {
-      const { url } = req.body;
-      const cookiesFile = getCookiesFile(url);
+  try {
+    const response = await fetch(url); // ✅ use node-fetch
+    if (!response.ok) return res.status(502).send('Bad upstream response');
 
-      // If cookies required and missing, notify
-      // (Allow public videos even if cookies are missing)
-      // if (
-      //   !cookiesFile &&
-      //   (url.includes("instagram.com") ||
-      //     url.includes("facebook.com") ||
-      //     url.includes("tiktok.com") ||
-      //     url.includes("twitter.com") ||
-      //     url.includes("x.com"))
-      // ) {
-      //   return res.status(400).json({
-      //     error:
-      //       "Cookies file is missing for this platform. Please upload or configure it.",
-      //   });
-      // }
-
-      // Fetch video info with cookies if available
-      const args = cookiesFile
-        ? ["--no-playlist", "--cookies", cookiesFile, url]
-        : ["--no-playlist", url];
-
-      const info = await ytDlpWrap.getVideoInfo(args);
-      const filename = sanitizeFilename(info.title || "video");
-
-      // Filter formats with URLs (exclude dash, live etc. if desired)
-      // Filter formats with playable video and exclude AV1
-      const formats = (info.formats || []).filter(
-        (f) => f.url && (!f.vcodec || !f.vcodec.includes("av01"))
-      );
-
-      res.json({
-        downloadId: uuidv4(),
-        filename,
-        formats,
-      });
-    } catch (err) {
-      console.error("Init download error:", err);
-      res.status(500).json({ error: "Failed to get video info" });
-    }
+    res.set('Content-Type', response.headers.get('content-type'));
+    response.body.pipe(res); // stream the image
+  } catch (err) {
+    console.error("Proxy fetch error:", err); // ✅ add this for debugging
+    res.status(500).send('Proxy error');
   }
-);
+});
+
 
 app.get("/api/ping", (req, res) => {
   res.send("Backend is alive!");
