@@ -13,7 +13,8 @@ const archiver = require("archiver");
 const rateLimit = require("express-rate-limit");
 const { body, validationResult } = require("express-validator");
 const os = require("os");
-const fetch = require("node-fetch"); // ✅ make sure this is at the top
+const fetch = require('node-fetch'); // ✅ Add this
+
 
 
 
@@ -308,11 +309,11 @@ app.get('/api/proxy', async (req, res) => {
   if (!url) return res.status(400).send('Missing url');
 
   try {
-    const response = await fetch(url);
+    const response = await fetch(url); // ✅ Works now
     if (!response.ok) return res.status(502).send('Bad upstream response');
 
     const contentType = response.headers.get('content-type');
-    const buffer = await response.buffer(); // 👈 convert to buffer
+    const buffer = await response.buffer(); // ✅ Better for image proxy
 
     res.set('Content-Type', contentType);
     res.send(buffer);
