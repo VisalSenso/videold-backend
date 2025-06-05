@@ -20,7 +20,6 @@
     "fs-extra": "^11.3.0",
     "mime": "^4.0.7",
     "multer": "^2.0.0",
-    "node-fetch": "^3.3.2",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
     "tmp": "^0.2.3",
