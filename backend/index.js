@@ -160,14 +160,11 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
         args.push("--merge-output-format", "mp4");
         // Do NOT add --recode-video for X
       } else if (url.includes("instagram.com")) {
-        // Check if user selected an audio-only format
-        const selectedFormat =
-          quality && (info.formats || []).find((f) => f.format_id === quality);
-        if (selectedFormat && selectedFormat.vcodec === "none") {
-          // Download audio-only if user selected audio format
+        // For Instagram: allow user to select any available format (audio or video)
+        if (quality) {
           args.push("-f", quality);
         } else {
-          // Otherwise, merge best video+audio for compatibility
+          // Default: best MP4 video+audio for compatibility
           args.push("-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
         }
         args.push("--merge-output-format", "mp4");
@@ -560,7 +557,10 @@ app.post(
       // YouTube
       if (
         /youtube|youtu\.be/i.test(errMsg) &&
-        (/login required|not available|cookies|This video is private|sign in|429|Too Many Requests|quota exceeded|rate limit/i.test(errMsg) || /HTTP Error 429|Too Many Requests|quota/i.test(errMsg))
+        (/login required|not available|cookies|This video is private|sign in|429|Too Many Requests|quota exceeded|rate limit/i.test(
+          errMsg
+        ) ||
+          /HTTP Error 429|Too Many Requests|quota/i.test(errMsg))
       ) {
         return res.status(429).json({
           error:
