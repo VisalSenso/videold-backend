@@ -57,13 +57,12 @@ io.on("connection", (socket) => {
   });
 });
 
-app.use(cors({
-  origin: [
-    "https://videodl.netlify.app",
-    "http://localhost:5173",
-  ],
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: ["https://videodl.netlify.app", "http://localhost:5173"],
+    credentials: true,
+  })
+);
 app.use(bodyParser.json());
 
 // ✅ Fix for rate-limit trust proxy validation
@@ -520,15 +519,53 @@ app.post(
     } catch (err) {
       console.error("Failed at /api/downloads with URL:", req.body.url);
       console.error("Error details:", err.stderr || err.message || err);
-      // Instagram login/cookie error detection
+      // Platform-specific error handling
       const errMsg = (err && (err.stderr || err.message || "")).toString();
+      // Instagram
       if (
         /instagram/i.test(errMsg) &&
-        (/login required|rate-limit reached|not available|use --cookies|Main webpage is locked behind the login page|unable to extract shared data/i.test(errMsg))
+        /login required|rate-limit reached|not available|use --cookies|Main webpage is locked behind the login page|unable to extract shared data/i.test(
+          errMsg
+        )
       ) {
         return res.status(403).json({
           error:
             "Instagram requires login/cookies to download this video. Please log in and provide cookies, or try a different public video.",
+          details: errMsg,
+        });
+      }
+      // Facebook
+      if (
+        /facebook/i.test(errMsg) &&
+        /login required|not available|cookies/i.test(errMsg)
+      ) {
+        return res.status(403).json({
+          error:
+            "Facebook requires login/cookies to download this video. Please log in and provide cookies, or try a different public video.",
+          details: errMsg,
+        });
+      }
+      // TikTok
+      if (
+        /tiktok/i.test(errMsg) &&
+        /login required|not available|cookies|forbidden|403/i.test(errMsg)
+      ) {
+        return res.status(403).json({
+          error:
+            "TikTok requires login/cookies to download this video. Please log in and provide cookies, or try a different public video.",
+          details: errMsg,
+        });
+      }
+      // YouTube
+      if (
+        /youtube|youtu\.be/i.test(errMsg) &&
+        /login required|not available|cookies|This video is private|sign in/i.test(
+          errMsg
+        )
+      ) {
+        return res.status(403).json({
+          error:
+            "YouTube requires login/cookies to download this video. Please log in and provide cookies, or try a different public video.",
           details: errMsg,
         });
       }
