@@ -323,6 +323,15 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
               return reject(new Error("Download failed or file not found"));
             }
 
+            // --- TikTok/other: Detect .txt file (error page) and reject ---
+            if (downloadedFile.endsWith('.txt')) {
+              const errorContent = fs.readFileSync(path.join(tmpDir.name, downloadedFile), 'utf8');
+              tmpDir.removeCallback();
+              return reject(new Error(
+                `Download failed: TikTok (or platform) returned a .txt file instead of video.\n\nError content:\n${errorContent.substring(0, 500)}`
+              ));
+            }
+
             const fullPath = path.join(tmpDir.name, downloadedFile);
 
             resolve({
