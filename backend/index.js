@@ -160,6 +160,25 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
         args.push("--merge-output-format", "mp4");
         // Do NOT add --recode-video for X
       } else if (url.includes("instagram.com")) {
+        // Always add a browser User-Agent for Instagram
+        args.push(
+          "--user-agent",
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+        );
+        // If cookies file is present, add as header (yt-dlp will use --cookies, but this helps)
+        if (cookiesFile) {
+          const cookiesContent = fs
+            .readFileSync(cookiesFile, "utf8")
+            .split("\n")
+            .filter((l) => !l.startsWith("#") && l.trim())
+            .map((l) => l.split("\t"))
+            .filter((a) => a.length > 5)
+            .map((a) => `${a[5]}=${a[6]}`)
+            .join("; ");
+          if (cookiesContent) {
+            args.push("--add-header", `cookie: ${cookiesContent}`);
+          }
+        }
         // Check if user selected an audio-only format
         const selectedFormat =
           quality && (info.formats || []).find((f) => f.format_id === quality);
