@@ -13,7 +13,8 @@ const archiver = require("archiver");
 const rateLimit = require("express-rate-limit");
 const { body, validationResult } = require("express-validator");
 const os = require("os");
-const fetch = require("node-fetch"); // Add this near the top if not already present
+// Use CommonJS import for node-fetch for compatibility
+const fetch = require('node-fetch/commonjs');
 
 const isWindows = os.platform() === "win32";
 
