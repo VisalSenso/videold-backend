@@ -117,7 +117,7 @@ function isValidVideoUrl(url) {
   // Accept YouTube, Facebook, Instagram, TikTok, X/Twitter, TikTok short links
   return (
     typeof url === "string" &&
-    /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be|m\.youtube\.com|music\.youtube\.com|facebook\.com|fb\.watch|instagram\.com|tiktok\.com|vt\.tiktok\.com|twitter\.com|x\.com)\//.test(
+    /^(https?:\/\/)?([a-zA-Z0-9-]+\.)?(youtube\.com|youtu\.be|m\.youtube\.com|music\.youtube\.com|facebook\.com|fb\.watch|instagram\.com|tiktok\.com|vt\.tiktok\.com|twitter\.com|x\.com)\//.test(
       url
     )
   );
