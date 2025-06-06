@@ -24,7 +24,7 @@ const ytDlpWrap = new YtDlpWrap(ytDlpPath);
 
 const app = express();
 // Keep only if you're behind a proxy like Render or NGINX
-app.set('trust proxy', 1); 
+app.set("trust proxy", 1);
 
 const PORT = process.env.PORT || 3000;
 
@@ -56,10 +56,8 @@ const limiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-
 });
 app.use(limiter);
-
 
 // Serve frontend static files
 app.use(express.static(path.join(__dirname, "../video-downloader/dist")));
@@ -317,21 +315,20 @@ app.post(
       const { url } = req.body;
       const cookiesFile = getCookiesFile(url);
 
-      // If cookies required and missing, notify
-      // (Allow public videos even if cookies are missing)
-      // if (
-      //   !cookiesFile &&
-      //   (url.includes("instagram.com") ||
-      //     url.includes("facebook.com") ||
-      //     url.includes("tiktok.com") ||
-      //     url.includes("twitter.com") ||
-      //     url.includes("x.com"))
-      // ) {
-      //   return res.status(400).json({
-      //     error:
-      //       "Cookies file is missing for this platform. Please upload or configure it.",
-      //   });
-      // }
+      // If platform requires cookies and cookies file missing, return clear error
+      const needsCookies = [
+        "instagram.com",
+        "facebook.com",
+        "tiktok.com",
+        "twitter.com",
+        "x.com",
+      ];
+      if (needsCookies.some((domain) => url.includes(domain)) && !cookiesFile) {
+        return res.status(400).json({
+          error:
+            "This platform now requires login cookies for downloads. Please upload a fresh cookies file (e.g. instagram.com_cookies.txt, facebook.com_cookies.txt, tiktok.com_cookies.txt, x.com_cookies.txt) to the backend directory and redeploy. See the FAQ for help.",
+        });
+      }
 
       // Fetch video info with cookies if available
       const args = cookiesFile
@@ -383,6 +380,21 @@ app.post(
 
     try {
       const cookiesFile = getCookiesFile(url);
+
+      // If platform requires cookies and cookies file missing, return clear error
+      const needsCookies = [
+        "instagram.com",
+        "facebook.com",
+        "tiktok.com",
+        "twitter.com",
+        "x.com",
+      ];
+      if (needsCookies.some((domain) => url.includes(domain)) && !cookiesFile) {
+        return res.status(400).json({
+          error:
+            "This platform now requires login cookies for downloads. Please upload a fresh cookies file (e.g. instagram.com_cookies.txt, facebook.com_cookies.txt, tiktok.com_cookies.txt, x.com_cookies.txt) to the backend directory and redeploy. See the FAQ for help.",
+        });
+      }
 
       // If quality not specified, return metadata (playlist or single)
       if (!quality) {
