@@ -362,12 +362,16 @@ app.post(
     body("url")
       .custom(isValidVideoUrl)
       .withMessage("Invalid or unsupported video URL."),
-    body("quality").optional().isString().isLength({ max: 20 }),
+    body("quality").optional().isString().isLength({ max: 50 }), // Allow longer format_id
     body("downloadId").optional().isString().isLength({ max: 64 }),
   ],
   async (req, res) => {
+    // Log request body for debugging
+    console.log("/api/downloads request body:", req.body);
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
+      // Log validation errors for debugging
+      console.error("/api/downloads validation errors:", errors.array());
       return res.status(400).json({ error: errors.array()[0].msg });
     }
 
