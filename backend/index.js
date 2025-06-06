@@ -169,6 +169,12 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
         }
         args.push("--merge-output-format", "mp4");
         args.push("--recode-video", "mp4");
+        // Add browser-like headers for Instagram
+        args.push(
+          "--user-agent",
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        );
+        args.push("--add-header", "Accept-Language: en-US,en;q=0.9");
         if (!cookiesFile) {
           console.warn(
             "[Instagram] No cookies file found. Some public videos may require login. If you see errors, please provide an up-to-date cookies file from your browser."
