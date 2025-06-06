@@ -1,6 +1,6 @@
 node_modules/
 *.log
-*.txt
+# *.txt
 cookies/
 downloads/
 init-download/
