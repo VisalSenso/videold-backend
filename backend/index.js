@@ -52,7 +52,13 @@ io.on("connection", (socket) => {
   });
 });
 
-app.use(cors());
+app.use(cors({
+  origin: [
+    "https://videodl.netlify.app",
+    "http://localhost:5173",
+  ],
+  credentials: true,
+}));
 app.use(bodyParser.json());
 
 // ✅ Fix for rate-limit trust proxy validation
