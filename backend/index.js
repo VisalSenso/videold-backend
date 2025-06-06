@@ -16,7 +16,7 @@ const os = require("os");
 // Use node-fetch import compatible with most Node.js environments
 let fetch;
 try {
-  fetch = require("node-fetch");
+  fetch = require("node-fetch").default;
 } catch (e) {
   fetch = (...args) =>
     import("node-fetch").then(({ default: fetch }) => fetch(...args));
