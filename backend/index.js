@@ -86,6 +86,7 @@ function getCookiesFile(url) {
     "instagram.com": "instagram.com_cookies.txt",
     "facebook.com": "facebook.com_cookies.txt",
     "tiktok.com": "tiktok.com_cookies.txt",
+    "vt.tiktok.com": "tiktok.com_cookies.txt", // TikTok short links
     "youtube.com": "youtube.com_cookies.txt",
     "youtu.be": "youtube.com_cookies.txt",
     "twitter.com": "x.com_cookies.txt",
