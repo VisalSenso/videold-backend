@@ -113,10 +113,10 @@ function sanitizeFilename(name) {
 
 // Helper: validate URL is a valid video link
 function isValidVideoUrl(url) {
-  // Accept YouTube, Facebook, Instagram, TikTok, X/Twitter
+  // Accept YouTube, Facebook, Instagram, TikTok, X/Twitter, TikTok short links
   return (
     typeof url === "string" &&
-    /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be|facebook\.com|fb\.watch|instagram\.com|tiktok\.com|twitter\.com|x\.com)\//.test(
+    /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be|facebook\.com|fb\.watch|instagram\.com|tiktok\.com|vt\.tiktok\.com|twitter\.com|x\.com)\//.test(
       url
     )
   );
