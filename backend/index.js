@@ -381,20 +381,7 @@ app.post(
     try {
       const cookiesFile = getCookiesFile(url);
 
-      // If platform requires cookies and cookies file missing, return clear error
-      const needsCookies = [
-        "instagram.com",
-        "facebook.com",
-        "tiktok.com",
-        "twitter.com",
-        "x.com",
-      ];
-      if (needsCookies.some((domain) => url.includes(domain)) && !cookiesFile) {
-        return res.status(400).json({
-          error:
-            "This platform now requires login cookies for downloads. Please upload a fresh cookies file (e.g. instagram.com_cookies.txt, facebook.com_cookies.txt, tiktok.com_cookies.txt, x.com_cookies.txt) to the backend directory and redeploy. See the FAQ for help.",
-        });
-      }
+      // REMOVED cookies check to allow fetching without cookies for public videos
 
       // If quality not specified, return metadata (playlist or single)
       if (!quality) {
