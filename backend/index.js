@@ -85,11 +85,14 @@ function getCookiesFile(url) {
   // Always use instagram.com_cookies.txt for any Instagram URL
   if (/instagram\.com/i.test(url)) {
     const file = path.join(__dirname, "instagram.com_cookies.txt");
+    console.log("[Instagram] __dirname:", __dirname);
+    console.log("[Instagram] process.cwd():", process.cwd());
+    console.log("[Instagram] Checking for cookies file at:", file);
     if (fs.existsSync(file)) {
       console.log("[Instagram] Using cookies file:", file);
       return file;
     } else {
-      console.warn("[Instagram] instagram.com_cookies.txt not found!");
+      console.warn("[Instagram] instagram.com_cookies.txt not found at:", file);
       return null;
     }
   }
