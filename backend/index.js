@@ -413,11 +413,24 @@ app.post(
               const fullInfoJson = await ytDlpWrap.execPromise(fullInfoArgs);
               const fullInfo = JSON.parse(fullInfoJson);
 
+              // --- Thumbnail robust extraction ---
+              let thumbnail = fullInfo.thumbnail || null;
+              // Fallback: use first HTTPS thumbnail from thumbnails array
+              if (
+                (!thumbnail || !/^https:/.test(thumbnail)) &&
+                Array.isArray(fullInfo.thumbnails)
+              ) {
+                const httpsThumb = fullInfo.thumbnails.find(
+                  (t) => t.url && t.url.startsWith("https:")
+                );
+                if (httpsThumb) thumbnail = httpsThumb.url;
+              }
+
               return {
                 id: fullInfo.id,
                 title: fullInfo.title || `Video ${fullInfo.id}`,
                 url: fullInfo.webpage_url || videoUrl,
-                thumbnail: fullInfo.thumbnail || null,
+                thumbnail,
                 formats: fullInfo.formats || [],
               };
             })
@@ -430,7 +443,20 @@ app.post(
           });
         } else {
           // Single video metadata
-          return res.json(info);
+          // --- Thumbnail robust extraction for single video ---
+          let singleInfo = info;
+          let thumbnail = singleInfo.thumbnail || null;
+          if (
+            (!thumbnail || !/^https:/.test(thumbnail)) &&
+            Array.isArray(singleInfo.thumbnails)
+          ) {
+            const httpsThumb = singleInfo.thumbnails.find(
+              (t) => t.url && t.url.startsWith("https:")
+            );
+            if (httpsThumb) thumbnail = httpsThumb.url;
+          }
+          singleInfo.thumbnail = thumbnail;
+          return res.json(singleInfo);
         }
       }
 
