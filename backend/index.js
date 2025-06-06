@@ -549,14 +549,11 @@ app.post(
         const { url, quality, title } = video;
         const cookiesFile = getCookiesFile(url);
 
-        if (!cookiesFile) {
-          tmpDir.removeCallback();
-          return res
-            .status(400)
-            .json({ error: `Cookies file missing for: ${url}` });
-        }
+        // REMOVED cookies check to allow fetching without cookies for public videos
 
-        const baseArgs = ["--cookies", cookiesFile, "--no-playlist", url];
+        const baseArgs = cookiesFile
+          ? ["--cookies", cookiesFile, "--no-playlist", url]
+          : ["--no-playlist", url];
         const info = await ytDlpWrap.getVideoInfo(baseArgs);
 
         let formatArg;
