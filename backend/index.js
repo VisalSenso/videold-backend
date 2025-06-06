@@ -169,6 +169,11 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
         }
         args.push("--merge-output-format", "mp4");
         args.push("--recode-video", "mp4");
+        if (!cookiesFile) {
+          console.warn(
+            "[Instagram] No cookies file found. Some public videos may require login. If you see errors, please provide an up-to-date cookies file from your browser."
+          );
+        }
       } else if (quality) {
         // For YouTube: always use the user-selected format, merging with bestaudio if video-only
         if (url.includes("youtube.com") || url.includes("youtu.be")) {
