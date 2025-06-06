@@ -123,26 +123,6 @@ function isValidVideoUrl(url) {
   );
 }
 
-// === Proxy rotation setup ===
-// Add your proxy URLs here (http/https/socks5 supported by yt-dlp)
-const PROXY_LIST = [
-  "http://51.158.68.68:8811",
-  "http://185.61.152.137:8080",
-  "http://103.216.82.44:6667",
-  "http://14.241.80.37:8080",
-  "http://8.217.124.178:49440",
-  "http://154.65.39.7:80",
-  // ...add more from the free proxy list
-];
-let proxyIndex = 0;
-function getNextProxy() {
-  if (!PROXY_LIST.length) return null;
-  // Round-robin selection
-  const proxy = PROXY_LIST[proxyIndex % PROXY_LIST.length];
-  proxyIndex++;
-  return proxy;
-}
-
 // Download helper with socket.io progress emit
 async function downloadWithProgress({ url, quality, downloadId, io }) {
   const tmpDir = tmp.dirSync({ unsafeCleanup: true });
@@ -150,13 +130,10 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
   try {
     // Detect cookies.txt file if needed for private videos
     const cookiesFile = getCookiesFile(url);
-    // === Proxy selection ===
-    const proxy = getNextProxy();
 
     // Get video info for filename
     const infoArgs = ["--no-playlist"];
     if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
-    if (proxy) infoArgs.push("--proxy", proxy);
     infoArgs.push(url);
 
     const info = await ytDlpWrap.getVideoInfo(infoArgs);
@@ -165,10 +142,11 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
 
     return new Promise((resolve, reject) => {
       const args = ["--no-playlist", "--newline"];
+
+      // Add cookies if available
       if (cookiesFile) {
         args.push("--cookies", cookiesFile);
       }
-      if (proxy) args.push("--proxy", proxy);
 
       // Handle format
       if (url.includes("facebook.com")) {
@@ -355,14 +333,14 @@ app.post(
     try {
       const { url } = req.body;
       const cookiesFile = getCookiesFile(url);
-      // === Proxy selection ===
-      const proxy = getNextProxy();
+
+      // REMOVED cookies check to allow fetching without cookies for public videos
+
       // Fetch video info with cookies if available
       const args = cookiesFile
-        ? ["--no-playlist", "--cookies", cookiesFile]
-        : ["--no-playlist"];
-      if (proxy) args.push("--proxy", proxy);
-      args.push(url);
+        ? ["--no-playlist", "--cookies", cookiesFile, url]
+        : ["--no-playlist", url];
+
       const info = await ytDlpWrap.getVideoInfo(args);
       const filename = sanitizeFilename(info.title || "video");
 
@@ -412,8 +390,6 @@ app.post(
 
     try {
       const cookiesFile = getCookiesFile(url);
-      // === Proxy selection ===
-      const proxy = getNextProxy();
 
       // REMOVED cookies check to allow fetching without cookies for public videos
 
@@ -635,13 +611,12 @@ app.post(
       for (const video of videos) {
         const { url, quality, title } = video;
         const cookiesFile = getCookiesFile(url);
-        // === Proxy selection ===
-        const proxy = getNextProxy();
+
+        // REMOVED cookies check to allow fetching without cookies for public videos
+
         const baseArgs = cookiesFile
-          ? ["--cookies", cookiesFile, "--no-playlist"]
-          : ["--no-playlist"];
-        if (proxy) baseArgs.push("--proxy", proxy);
-        baseArgs.push(url);
+          ? ["--cookies", cookiesFile, "--no-playlist", url]
+          : ["--no-playlist", url];
         const info = await ytDlpWrap.getVideoInfo(baseArgs);
 
         let formatArg;
