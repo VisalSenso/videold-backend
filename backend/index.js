@@ -39,7 +39,12 @@ const PORT = process.env.PORT || 3000;
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "*",
+    origin: [
+      "https://videodl.netlify.app",
+      "http://localhost:5173",
+      "*", // Allow all origins for maximum compatibility
+    ],
+    credentials: true,
   },
 });
 
