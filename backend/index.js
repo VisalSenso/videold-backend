@@ -560,13 +560,11 @@ app.post(
       // YouTube
       if (
         /youtube|youtu\.be/i.test(errMsg) &&
-        /login required|not available|cookies|This video is private|sign in/i.test(
-          errMsg
-        )
+        (/login required|not available|cookies|This video is private|sign in|429|Too Many Requests|quota exceeded|rate limit/i.test(errMsg) || /HTTP Error 429|Too Many Requests|quota/i.test(errMsg))
       ) {
-        return res.status(403).json({
+        return res.status(429).json({
           error:
-            "YouTube requires login/cookies to download this video. Please log in and provide cookies, or try a different public video.",
+            "YouTube is temporarily blocking downloads from this server due to too many requests (HTTP 429 / rate limit). Please try again later, or use a different server or your local machine.",
           details: errMsg,
         });
       }
