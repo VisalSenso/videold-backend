@@ -82,17 +82,27 @@ app.use(express.static(path.join(__dirname, "../video-downloader/dist")));
 
 // Utility to get cookies file based on URL domain
 function getCookiesFile(url) {
+  // Always use instagram.com_cookies.txt for any Instagram URL
+  if (/instagram\.com/i.test(url)) {
+    const file = path.join(__dirname, "instagram.com_cookies.txt");
+    if (fs.existsSync(file)) {
+      console.log("[Instagram] Using cookies file:", file);
+      return file;
+    } else {
+      console.warn("[Instagram] instagram.com_cookies.txt not found!");
+      return null;
+    }
+  }
+  // Other platforms as before
   const domainCookiesMap = {
-    "instagram.com": "instagram.com_cookies.txt",
     "facebook.com": "facebook.com_cookies.txt",
     "tiktok.com": "tiktok.com_cookies.txt",
-    "vt.tiktok.com": "tiktok.com_cookies.txt", // TikTok short links
+    "vt.tiktok.com": "tiktok.com_cookies.txt",
     "youtube.com": "youtube.com_cookies.txt",
     "youtu.be": "youtube.com_cookies.txt",
     "twitter.com": "x.com_cookies.txt",
     "x.com": "x.com_cookies.txt",
   };
-
   for (const domain in domainCookiesMap) {
     if (url.includes(domain)) {
       const file = path.join(__dirname, domainCookiesMap[domain]);
