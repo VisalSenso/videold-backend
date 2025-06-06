@@ -537,6 +537,8 @@ app.post(
           errMsg
         )
       ) {
+        // Log the full yt-dlp error for debugging
+        console.error("[Instagram 403] yt-dlp error details:", errMsg);
         return res.status(403).json({
           error:
             "Instagram requires login/cookies to download this video. Please log in and provide cookies, or try a different public video.",
