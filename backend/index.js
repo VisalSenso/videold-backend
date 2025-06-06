@@ -13,6 +13,7 @@ const archiver = require("archiver");
 const rateLimit = require("express-rate-limit");
 const { body, validationResult } = require("express-validator");
 const os = require("os");
+const fetch = require("node-fetch"); // Add this near the top if not already present
 
 const isWindows = os.platform() === "win32";
 
@@ -658,6 +659,29 @@ app.post(
     }
   }
 );
+
+// Proxy thumbnail image fetching
+app.get("/api/proxy-thumbnail", async (req, res) => {
+  const { url } = req.query;
+  if (!url || !/^https?:\/\//.test(url)) {
+    return res.status(400).send("Invalid URL");
+  }
+  try {
+    const response = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+    });
+    if (!response.ok) {
+      return res.status(502).send("Failed to fetch image");
+    }
+    res.set(
+      "Content-Type",
+      response.headers.get("content-type") || "image/jpeg"
+    );
+    response.body.pipe(res);
+  } catch (e) {
+    res.status(500).send("Error proxying image");
+  }
+});
 
 // Serve frontend for all non-API, non-static routes (must be last!)
 app.use(express.static(path.join(__dirname, "../video-downloader/dist")));
