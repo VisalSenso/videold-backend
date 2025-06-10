@@ -827,12 +827,13 @@ app.get("/api/direct-download", async (req, res) => {
   }
   try {
     const cookiesFile = getCookiesFile(url);
-    // Get video info for filename
+    // Get video info for filename and filesize
     const infoArgs = ["--no-playlist"];
     if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
     infoArgs.push(url);
     const info = await ytDlpWrap.getVideoInfo(infoArgs);
     const safeFilename = sanitizeFilename(info.title || uuidv4()) + ".mp4";
+    const contentLength = info.filesize || info.filesize_approx || null;
     // Build yt-dlp args for streaming
     const args = ["--no-playlist", "--newline"];
     if (cookiesFile) args.push("--cookies", cookiesFile);
@@ -877,6 +878,9 @@ app.get("/api/direct-download", async (req, res) => {
     let streamErrored = false;
     let processExited = false;
     let exitCode = 0;
+    let ytDlpTimeout;
+    let sentResponse = false;
+    let stderrLog = Buffer.alloc(0);
 
     // Start yt-dlp process
     console.log("[yt-dlp direct-download] args:", args);
@@ -886,13 +890,27 @@ app.get("/api/direct-download", async (req, res) => {
       return res.status(500).json({ error: "yt-dlp failed to start. Check server yt-dlp binary." });
     }
 
+    // --- Add startup timeout (15s) ---
+    let startupTimeout = setTimeout(() => {
+      if (!headerChecked && !streamErrored) {
+        streamErrored = true;
+        ytProcess.kill();
+        if (!res.headersSent) {
+          res.status(504).json({ error: "yt-dlp took too long to start streaming. Please try again later." });
+        }
+      }
+    }, 15000);
+
+    let stderrData = Buffer.alloc(0);
     ytProcess.stderr.on("data", (data) => {
+      stderrData = Buffer.concat([stderrData, Buffer.from(data)]);
       // Optionally log errors
       // console.error("yt-dlp stderr:", data.toString());
     });
 
     ytProcess.on("error", (err) => {
       streamErrored = true;
+      clearTimeout(startupTimeout);
       if (!res.headersSent) {
         res.status(500).json({ error: "Download failed", details: err.message });
       } else {
@@ -903,8 +921,10 @@ app.get("/api/direct-download", async (req, res) => {
     ytProcess.on("close", (code) => {
       processExited = true;
       exitCode = code;
+      clearTimeout(startupTimeout);
       if (code !== 0 && !res.headersSent) {
-        res.status(500).json({ error: "Download failed (yt-dlp error)" });
+        console.error("[yt-dlp direct-download] exited with code", code, "stderr:", stderrData.toString());
+        res.status(500).json({ error: "Download failed (yt-dlp error)", details: stderrData.toString() });
       }
     });
 
@@ -922,21 +942,31 @@ app.get("/api/direct-download", async (req, res) => {
       }
     });
 
-    function checkAndStream() {
+    async function checkAndStream() {
       headerChecked = true;
+      clearTimeout(startupTimeout);
       // Check for MP4 header (ftyp)
       const ftypIndex = headerBuffer.indexOf("ftyp");
       if (ftypIndex === -1) {
         streamErrored = true;
         if (!res.headersSent) {
-          res.status(500).json({ error: "Download failed: Not a valid MP4 file. The video may be private, region-locked, or unavailable." });
+          res.status(500).json({ error: "Download failed: Not a valid MP4 file. The video may be private, region-locked, or unavailable.", details: stderrData.toString() });
         }
         ytProcess.kill();
         return;
       }
-      // Set headers and stream
+      // Try to get Content-Length from yt-dlp info (if available)
+      let contentLength = null;
+      if (info && info.filesize) {
+        contentLength = info.filesize;
+      } else if (info && info.filesize_approx) {
+        contentLength = info.filesize_approx;
+      }
       res.setHeader("Content-Disposition", contentDisposition(safeFilename));
       res.setHeader("Content-Type", "video/mp4");
+      if (contentLength) {
+        res.setHeader("Content-Length", contentLength);
+      }
       res.write(headerBuffer);
       ytProcess.stdout.pipe(res, { end: true });
     }
