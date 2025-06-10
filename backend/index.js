@@ -167,7 +167,7 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
         args.push("--recode-video", "mp4");
       } else if (url.includes("x.com") || url.includes("twitter.com")) {
         // For X (Twitter), let yt-dlp pick and merge best video+audio (no recode)
-        args.push("-f", "bestvideo*+bestaudio/best");
+        args.push("-f", "best[ext=mp4]/best"); // fallback to best mp4 if bestvideo+bestaudio fails
         args.push("--merge-output-format", "mp4");
         // Do NOT add --recode-video for X
       } else if (url.includes("instagram.com")) {
@@ -831,7 +831,14 @@ app.get("/api/direct-download", async (req, res) => {
     const infoArgs = ["--no-playlist"];
     if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
     infoArgs.push(url);
-    const info = await ytDlpWrap.getVideoInfo(infoArgs);
+    let info;
+    try {
+      info = await ytDlpWrap.getVideoInfo(infoArgs);
+    } catch (err) {
+      // If info fetch fails, log and return a clear error
+      console.error("[yt-dlp direct-download] getVideoInfo error:", err.stderr || err.message || err);
+      return res.status(500).json({ error: "Failed to fetch video info. The video may be private, deleted, or region-locked.", details: err.stderr || err.message || err });
+    }
     const safeFilename = sanitizeFilename(info.title || uuidv4()) + ".mp4";
     const contentLength = info.filesize || info.filesize_approx || null;
     // Build yt-dlp args for streaming
@@ -842,7 +849,7 @@ app.get("/api/direct-download", async (req, res) => {
       args.push("--merge-output-format", "mp4");
       args.push("--recode-video", "mp4");
     } else if (url.includes("x.com") || url.includes("twitter.com")) {
-      args.push("-f", "bestvideo*+bestaudio/best");
+      args.push("-f", "best[ext=mp4]/best"); // fallback to best mp4 if bestvideo+bestaudio fails
       args.push("--merge-output-format", "mp4");
     } else if (url.includes("instagram.com")) {
       args.push("-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
@@ -904,8 +911,6 @@ app.get("/api/direct-download", async (req, res) => {
     let stderrData = Buffer.alloc(0);
     ytProcess.stderr.on("data", (data) => {
       stderrData = Buffer.concat([stderrData, Buffer.from(data)]);
-      // Optionally log errors
-      // console.error("yt-dlp stderr:", data.toString());
     });
 
     ytProcess.on("error", (err) => {
