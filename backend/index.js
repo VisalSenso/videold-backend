@@ -638,7 +638,7 @@ app.post(
   ],
   async (req, res) => {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) {
+    if (!errors.isEmpty()) { 
       return res.status(400).json({ error: errors.array()[0].msg });
     }
 
@@ -827,29 +827,79 @@ app.get("/api/direct-download", async (req, res) => {
   }
   try {
     const cookiesFile = getCookiesFile(url);
-    // Download with progress emitting (no socket needed here)
-    const { filePath, filename, cleanup } = await downloadWithProgress({
-      url,
-      quality,
-      downloadId,
-      io: { to: () => ({ emit: () => {} }) }, // dummy io for compatibility
+    // Get video info for filename
+    const infoArgs = ["--no-playlist"];
+    if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
+    infoArgs.push(url);
+    const info = await ytDlpWrap.getVideoInfo(infoArgs);
+    const safeFilename = sanitizeFilename(info.title || uuidv4()) + ".mp4";
+    // Build yt-dlp args for streaming
+    const args = ["--no-playlist", "--newline"];
+    if (cookiesFile) args.push("--cookies", cookiesFile);
+    if (url.includes("facebook.com")) {
+      args.push("-f", "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+      args.push("--merge-output-format", "mp4");
+      args.push("--recode-video", "mp4");
+    } else if (url.includes("x.com") || url.includes("twitter.com")) {
+      args.push("-f", "bestvideo*+bestaudio/best");
+      args.push("--merge-output-format", "mp4");
+    } else if (url.includes("instagram.com")) {
+      args.push("-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
+      args.push("--merge-output-format", "mp4");
+      args.push(
+        "--user-agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+      );
+      args.push("--add-header", "Accept-Language: en-US,en;q=0.9");
+    } else if (url.includes("tiktok.com") || url.includes("vt.tiktok.com")) {
+      args.push("-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
+      args.push("--merge-output-format", "mp4");
+      args.push(
+        "--user-agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+      );
+      args.push("--add-header", "Accept-Language: en-US,en;q=0.9");
+    } else if (quality) {
+      args.push("-f", quality);
+      args.push("--merge-output-format", "mp4");
+      args.push("--recode-video", "mp4");
+    } else {
+      args.push("-f", "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+      args.push("--merge-output-format", "mp4");
+      args.push("--recode-video", "mp4");
+    }
+    args.push("-o", "-"); // Output to stdout
+    args.push(url);
+    // Set headers before streaming
+    res.setHeader("Content-Disposition", contentDisposition(safeFilename));
+    res.setHeader("Content-Type", "video/mp4");
+    // Start yt-dlp and pipe stdout to response
+    const ytProcess = ytDlpWrap.exec(args);
+    ytProcess.stdout.pipe(res);
+    ytProcess.stderr.on("data", (data) => {
+      // Optionally log errors
+      // console.error("yt-dlp stderr:", data.toString());
     });
-    const stat = fs.statSync(filePath);
-    res.writeHead(200, {
-      "Content-Type": "video/mp4",
-      "Content-Length": stat.size,
-      "Content-Disposition": contentDisposition(filename),
+    ytProcess.on("error", (err) => {
+      console.error("yt-dlp error (stream):", err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Download failed", details: err.message });
+      } else {
+        res.end();
+      }
     });
-    const stream = fs.createReadStream(filePath);
-    stream.pipe(res);
-    stream.on("close", cleanup);
-    stream.on("error", (err) => {
-      console.error("Stream error:", err);
-      cleanup();
-      res.status(500).send("Failed to stream file");
+    ytProcess.on("close", (code) => {
+      if (code !== 0) {
+        console.error("yt-dlp exited with code", code);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Download failed (yt-dlp error)" });
+        } else {
+          res.end();
+        }
+      }
     });
   } catch (err) {
-    console.error("Failed at /api/direct-download with URL:", url);
+    console.error("Failed at /api/direct-download (stream) with URL:", url);
     const errMsg = (err && (err.stderr || err.message || "")).toString();
     if (
       /tiktok/i.test(errMsg) &&
