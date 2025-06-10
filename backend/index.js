@@ -189,6 +189,21 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
             "[Instagram] No cookies file found. Some public videos may require login. If you see errors, please provide an up-to-date cookies file from your browser."
           );
         }
+      } else if (url.includes("tiktok.com") || url.includes("vt.tiktok.com")) {
+        // Always force bestvideo+audio for TikTok to avoid .txt or silent video
+        args.push("-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
+        args.push("--merge-output-format", "mp4");
+        // Add browser-like headers for TikTok
+        args.push(
+          "--user-agent",
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        );
+        args.push("--add-header", "Accept-Language: en-US,en;q=0.9");
+        if (!cookiesFile) {
+          console.warn(
+            "[TikTok] No cookies file found. Some videos may require login. If you see errors, please provide an up-to-date cookies file from your browser."
+          );
+        }
       } else if (quality) {
         // For YouTube: always use the user-selected format, merging with bestaudio if video-only
         if (url.includes("youtube.com") || url.includes("youtu.be")) {
