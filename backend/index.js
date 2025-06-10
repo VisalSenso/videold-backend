@@ -174,15 +174,10 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
         args.push("--merge-output-format", "mp4");
         // Do NOT add --recode-video for X
       } else if (url.includes("instagram.com")) {
-        // For Instagram: allow user to select any available format (audio or video)
-        if (quality) {
-          args.push("-f", quality);
-        } else {
-          // Default: best MP4 video+audio for compatibility
-          args.push("-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
-        }
+        // Always force bestvideo+audio for Instagram to avoid silent video
+        args.push("-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
         args.push("--merge-output-format", "mp4");
-        args.push("--recode-video", "mp4");
+        // Do NOT add --recode-video for Instagram to avoid GIF/silent video issues
         // Add browser-like headers for Instagram
         args.push(
           "--user-agent",
