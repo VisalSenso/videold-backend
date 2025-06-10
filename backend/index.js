@@ -339,7 +339,7 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
               const errorContent = fs.readFileSync(path.join(tmpDir.name, downloadedFile), 'utf8');
               tmpDir.removeCallback();
               return reject(new Error(
-                `Download failed: TikTok (or platform) returned a .txt file instead of video.\n\nError content:\n${errorContent.substring(0, 500)}`
+                `This TikTok video cannot be downloaded. It may be private, deleted, region-locked, or restricted by TikTok.\n\nDetails:\n${errorContent.substring(0, 500)}`
               ));
             }
 
