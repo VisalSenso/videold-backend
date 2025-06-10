@@ -659,10 +659,13 @@ app.get("/api/downloads", async (req, res) => {
     res.setHeader("Content-Disposition", contentDisposition(safeFilename));
     res.setHeader("Content-Type", "video/mp4");
 
-    const ytProcess = ytDlpWrap.exec(args);
+    // Use spawn to ensure stdout is available for piping
+    const { spawn } = require('child_process');
+    const ytDlpBin = ytDlpPath;
+    const ytArgs = args;
+    const ytProcess = spawn(ytDlpBin, ytArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
     ytProcess.stdout.pipe(res);
     ytProcess.stderr.on("data", (data) => {
-      // Optionally log errors
       console.error(`[yt-dlp stderr]`, data.toString());
     });
     ytProcess.on("error", (err) => {
