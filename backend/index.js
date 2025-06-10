@@ -39,10 +39,13 @@ const PORT = process.env.PORT || 3000;
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: ["https://videodl.netlify.app", "http://localhost:5173"],
+    origin: [
+      "https://videodl.netlify.app",
+      "http://localhost:5173"
+    ],
     methods: ["GET", "POST"],
-    credentials: true,
-  },
+    credentials: true
+  }
 });
 
 io.on("connection", (socket) => {
@@ -167,7 +170,7 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
         args.push("--recode-video", "mp4");
       } else if (url.includes("x.com") || url.includes("twitter.com")) {
         // For X (Twitter), let yt-dlp pick and merge best video+audio (no recode)
-        args.push("-f", "best[ext=mp4]/best"); // fallback to best mp4 if bestvideo+bestaudio fails
+        args.push("-f", "bestvideo*+bestaudio/best");
         args.push("--merge-output-format", "mp4");
         // Do NOT add --recode-video for X
       } else if (url.includes("instagram.com")) {
@@ -332,20 +335,12 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
             }
 
             // --- TikTok/other: Detect .txt file (error page) and reject ---
-            if (downloadedFile.endsWith(".txt")) {
-              const errorContent = fs.readFileSync(
-                path.join(tmpDir.name, downloadedFile),
-                "utf8"
-              );
+            if (downloadedFile.endsWith('.txt')) {
+              const errorContent = fs.readFileSync(path.join(tmpDir.name, downloadedFile), 'utf8');
               tmpDir.removeCallback();
-              return reject(
-                new Error(
-                  `This TikTok video cannot be downloaded. It may be private, deleted, region-locked, or restricted by TikTok.\n\nDetails:\n${errorContent.substring(
-                    0,
-                    500
-                  )}`
-                )
-              );
+              return reject(new Error(
+                `This TikTok video cannot be downloaded. It may be private, deleted, region-locked, or restricted by TikTok.\n\nDetails:\n${errorContent.substring(0, 500)}`
+              ));
             }
 
             const fullPath = path.join(tmpDir.name, downloadedFile);
@@ -638,7 +633,7 @@ app.post(
   ],
   async (req, res) => {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) { 
+    if (!errors.isEmpty()) {
       return res.status(400).json({ error: errors.array()[0].msg });
     }
 
@@ -815,204 +810,4 @@ app.get(/^\/(?!api\/).*/, (req, res) => {
 // Start the server
 server.listen(PORT, () => {
   console.log(`✅ Backend running at http://localhost:${PORT}`);
-});
-
-// API: direct download for instant browser download (GET)
-app.get("/api/direct-download", async (req, res) => {
-  const url = req.query.url;
-  const quality = req.query.quality;
-  const downloadId = req.query.downloadId || uuidv4();
-  if (!isValidVideoUrl(url)) {
-    return res.status(400).json({ error: "Invalid or unsupported video URL." });
-  }
-  try {
-    const cookiesFile = getCookiesFile(url);
-    // Get video info for filename and filesize
-    const infoArgs = ["--no-playlist"];
-    if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
-    infoArgs.push(url);
-    let info;
-    try {
-      info = await ytDlpWrap.getVideoInfo(infoArgs);
-    } catch (err) {
-      // If info fetch fails, log and return a clear error
-      console.error("[yt-dlp direct-download] getVideoInfo error:", err.stderr || err.message || err);
-      return res.status(500).json({ error: "Failed to fetch video info. The video may be private, deleted, or region-locked.", details: err.stderr || err.message || err });
-    }
-    const safeFilename = sanitizeFilename(info.title || uuidv4()) + ".mp4";
-    const contentLength = info.filesize || info.filesize_approx || null;
-    // Build yt-dlp args for streaming
-    const args = ["--no-playlist", "--newline"];
-    if (cookiesFile) args.push("--cookies", cookiesFile);
-    if (url.includes("facebook.com")) {
-      args.push("-f", "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
-      args.push("--merge-output-format", "mp4");
-      args.push("--recode-video", "mp4");
-    } else if (url.includes("x.com") || url.includes("twitter.com")) {
-      args.push("-f", "best[ext=mp4]/best"); // fallback to best mp4 if bestvideo+bestaudio fails
-      args.push("--merge-output-format", "mp4");
-    } else if (url.includes("instagram.com")) {
-      args.push("-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
-      args.push("--merge-output-format", "mp4");
-      args.push(
-        "--user-agent",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-      );
-      args.push("--add-header", "Accept-Language: en-US,en;q=0.9");
-    } else if (url.includes("tiktok.com") || url.includes("vt.tiktok.com")) {
-      args.push("-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
-      args.push("--merge-output-format", "mp4");
-      args.push(
-        "--user-agent",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-      );
-      args.push("--add-header", "Accept-Language: en-US,en;q=0.9");
-    } else if (quality) {
-      args.push("-f", quality);
-      args.push("--merge-output-format", "mp4");
-      args.push("--recode-video", "mp4");
-    } else {
-      args.push("-f", "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
-      args.push("--merge-output-format", "mp4");
-      args.push("--recode-video", "mp4");
-    }
-    args.push("-o", "-"); // Output to stdout
-
-    // Buffer the first 32KB to check for MP4 header
-    const MAX_HEADER = 32 * 1024;
-    let headerBuffer = Buffer.alloc(0);
-    let headerChecked = false;
-    let streamErrored = false;
-    let processExited = false;
-    let exitCode = 0;
-    let ytDlpTimeout;
-    let sentResponse = false;
-    let stderrLog = Buffer.alloc(0);
-
-    // Start yt-dlp process
-    console.log("[yt-dlp direct-download] args:", args);
-    const ytProcess = ytDlpWrap.exec(args);
-    if (!ytProcess || !ytProcess.stdout) {
-      console.error("yt-dlp process failed to start. Check yt-dlp path and permissions.");
-      return res.status(500).json({ error: "yt-dlp failed to start. Check server yt-dlp binary." });
-    }
-
-    // --- Add startup timeout (15s) ---
-    let startupTimeout = setTimeout(() => {
-      if (!headerChecked && !streamErrored) {
-        streamErrored = true;
-        ytProcess.kill();
-        if (!res.headersSent) {
-          res.status(504).json({ error: "yt-dlp took too long to start streaming. Please try again later." });
-        }
-      }
-    }, 15000);
-
-    let stderrData = Buffer.alloc(0);
-    ytProcess.stderr.on("data", (data) => {
-      stderrData = Buffer.concat([stderrData, Buffer.from(data)]);
-    });
-
-    ytProcess.on("error", (err) => {
-      streamErrored = true;
-      clearTimeout(startupTimeout);
-      if (!res.headersSent) {
-        res.status(500).json({ error: "Download failed", details: err.message });
-      } else {
-        res.end();
-      }
-    });
-
-    ytProcess.on("close", (code) => {
-      processExited = true;
-      exitCode = code;
-      clearTimeout(startupTimeout);
-      if (code !== 0 && !res.headersSent) {
-        console.error("[yt-dlp direct-download] exited with code", code, "stderr:", stderrData.toString());
-        res.status(500).json({ error: "Download failed (yt-dlp error)", details: stderrData.toString() });
-      }
-    });
-
-    ytProcess.stdout.on("data", function onData(chunk) {
-      if (headerChecked || streamErrored) return;
-      headerBuffer = Buffer.concat([headerBuffer, chunk]);
-      if (headerBuffer.length >= MAX_HEADER) {
-        ytProcess.stdout.removeListener("data", onData);
-        checkAndStream();
-      }
-    });
-    ytProcess.stdout.on("end", () => {
-      if (!headerChecked && !streamErrored) {
-        checkAndStream();
-      }
-    });
-
-    async function checkAndStream() {
-      headerChecked = true;
-      clearTimeout(startupTimeout);
-      // Check for MP4 header (ftyp)
-      const ftypIndex = headerBuffer.indexOf("ftyp");
-      if (ftypIndex === -1) {
-        streamErrored = true;
-        if (!res.headersSent) {
-          res.status(500).json({ error: "Download failed: Not a valid MP4 file. The video may be private, region-locked, or unavailable.", details: stderrData.toString() });
-        }
-        ytProcess.kill();
-        return;
-      }
-      // Try to get Content-Length from yt-dlp info (if available)
-      let contentLength = null;
-      if (info && info.filesize) {
-        contentLength = info.filesize;
-      } else if (info && info.filesize_approx) {
-        contentLength = info.filesize_approx;
-      }
-      res.setHeader("Content-Disposition", contentDisposition(safeFilename));
-      res.setHeader("Content-Type", "video/mp4");
-      if (contentLength) {
-        res.setHeader("Content-Length", contentLength);
-      }
-      res.write(headerBuffer);
-      ytProcess.stdout.pipe(res, { end: true });
-    }
-  } catch (err) {
-    console.error("Failed at /api/direct-download (stream) with URL:", url);
-    const errMsg = (err && (err.stderr || err.message || "")).toString();
-    if (
-      /tiktok/i.test(errMsg) &&
-      /login required|not available|cookies|forbidden|403/i.test(errMsg)
-    ) {
-      return res.status(403).json({
-        error:
-          "TikTok requires login/cookies to download this video. Please log in and provide cookies, or try a different public video.",
-        details: errMsg,
-      });
-    }
-    if (
-      /instagram/i.test(errMsg) &&
-      /login required|rate-limit reached|not available|use --cookies|Main webpage is locked behind the login page|unable to extract shared data/i.test(
-        errMsg
-      )
-    ) {
-      return res.status(403).json({
-        error:
-          "Instagram requires login/cookies to download this video. Please log in and provide cookies, or try a different public video.",
-        details: errMsg,
-      });
-    }
-    if (
-      /youtube|youtu\.be/i.test(errMsg) &&
-      (/login required|not available|cookies|This video is private|sign in|429|Too Many Requests|quota exceeded|rate limit/i.test(
-        errMsg
-      ) ||
-        /HTTP Error 429|Too Many Requests|quota/i.test(errMsg))
-    ) {
-      return res.status(429).json({
-        error:
-          "YouTube is temporarily blocking downloads from this server due to too many requests (HTTP 429 / rate limit). Please try again later, or use a different server or your local machine.",
-        details: errMsg,
-      });
-    }
-    res.status(500).json({ error: "Download failed", details: err.message });
-  }
 });
