@@ -39,13 +39,10 @@ const PORT = process.env.PORT || 3000;
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: [
-      "https://videodl.netlify.app",
-      "http://localhost:5173"
-    ],
+    origin: ["https://videodl.netlify.app", "http://localhost:5173"],
     methods: ["GET", "POST"],
-    credentials: true
-  }
+    credentials: true,
+  },
 });
 
 io.on("connection", (socket) => {
@@ -335,12 +332,20 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
             }
 
             // --- TikTok/other: Detect .txt file (error page) and reject ---
-            if (downloadedFile.endsWith('.txt')) {
-              const errorContent = fs.readFileSync(path.join(tmpDir.name, downloadedFile), 'utf8');
+            if (downloadedFile.endsWith(".txt")) {
+              const errorContent = fs.readFileSync(
+                path.join(tmpDir.name, downloadedFile),
+                "utf8"
+              );
               tmpDir.removeCallback();
-              return reject(new Error(
-                `This TikTok video cannot be downloaded. It may be private, deleted, region-locked, or restricted by TikTok.\n\nDetails:\n${errorContent.substring(0, 500)}`
-              ));
+              return reject(
+                new Error(
+                  `This TikTok video cannot be downloaded. It may be private, deleted, region-locked, or restricted by TikTok.\n\nDetails:\n${errorContent.substring(
+                    0,
+                    500
+                  )}`
+                )
+              );
             }
 
             const fullPath = path.join(tmpDir.name, downloadedFile);
@@ -619,6 +624,43 @@ app.post(
     }
   }
 );
+
+// API: download video (GET for direct browser download)
+app.get("/api/downloads", async (req, res) => {
+  const url = req.query.url;
+  const quality = req.query.quality;
+  if (!isValidVideoUrl(url)) {
+    return res.status(400).json({ error: "Invalid or unsupported video URL." });
+  }
+  try {
+    const cookiesFile = getCookiesFile(url);
+    // Download with progress emitting (no socket for GET)
+    const { filePath, filename, cleanup } = await downloadWithProgress({
+      url,
+      quality,
+      downloadId: null,
+      io,
+    });
+    const stat = fs.statSync(filePath);
+    res.writeHead(200, {
+      "Content-Type": "video/mp4",
+      "Content-Length": stat.size,
+      "Content-Disposition": contentDisposition(filename),
+    });
+    const stream = fs.createReadStream(filePath);
+    stream.pipe(res);
+    stream.on("close", cleanup);
+    stream.on("error", (err) => {
+      console.error("Stream error:", err);
+      cleanup();
+      res.status(500).send("Failed to stream file");
+    });
+  } catch (err) {
+    console.error("Failed at GET /api/downloads with URL:", url);
+    console.error("Error details:", err.stderr || err.message || err);
+    res.status(500).json({ error: "Download failed", details: err.message });
+  }
+});
 
 // API: multi-downloads (playlist ZIP)
 app.post(
