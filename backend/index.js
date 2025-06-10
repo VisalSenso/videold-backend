@@ -41,11 +41,11 @@ const io = new Server(server, {
   cors: {
     origin: [
       "https://videodl.netlify.app",
-      "http://localhost:5173",
-      "*", // Allow all origins for maximum compatibility
+      "http://localhost:5173"
     ],
-    credentials: true,
-  },
+    methods: ["GET", "POST"],
+    credentials: true
+  }
 });
 
 io.on("connection", (socket) => {
