@@ -879,6 +879,7 @@ app.get("/api/direct-download", async (req, res) => {
     let exitCode = 0;
 
     // Start yt-dlp process
+    console.log("[yt-dlp direct-download] args:", args);
     const ytProcess = ytDlpWrap.exec(args);
     if (!ytProcess || !ytProcess.stdout) {
       console.error("yt-dlp process failed to start. Check yt-dlp path and permissions.");
