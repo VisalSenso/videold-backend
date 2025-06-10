@@ -869,7 +869,6 @@ app.get("/api/direct-download", async (req, res) => {
       args.push("--recode-video", "mp4");
     }
     args.push("-o", "-"); // Output to stdout
-    args.push(url);
 
     // Buffer the first 32KB to check for MP4 header
     const MAX_HEADER = 32 * 1024;
@@ -881,6 +880,10 @@ app.get("/api/direct-download", async (req, res) => {
 
     // Start yt-dlp process
     const ytProcess = ytDlpWrap.exec(args);
+    if (!ytProcess || !ytProcess.stdout) {
+      console.error("yt-dlp process failed to start. Check yt-dlp path and permissions.");
+      return res.status(500).json({ error: "yt-dlp failed to start. Check server yt-dlp binary." });
+    }
 
     ytProcess.stderr.on("data", (data) => {
       // Optionally log errors
