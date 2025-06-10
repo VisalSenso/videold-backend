@@ -190,7 +190,7 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
           );
         }
       } else if (url.includes("tiktok.com") || url.includes("vt.tiktok.com")) {
-        // Always force bestvideo+audio for TikTok to avoid .txt or silent video
+        // Always force bestvideo+audio for TikTok to avoid .txt or silent video, IGNORE user quality
         args.push("-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
         args.push("--merge-output-format", "mp4");
         // Add browser-like headers for TikTok
@@ -204,6 +204,7 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
             "[TikTok] No cookies file found. Some videos may require login. If you see errors, please provide an up-to-date cookies file from your browser."
           );
         }
+        // SKIP the rest of the quality logic for TikTok
       } else if (quality) {
         // For YouTube: always use the user-selected format, merging with bestaudio if video-only
         if (url.includes("youtube.com") || url.includes("youtu.be")) {
