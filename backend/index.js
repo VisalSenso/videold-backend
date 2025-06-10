@@ -870,34 +870,72 @@ app.get("/api/direct-download", async (req, res) => {
     }
     args.push("-o", "-"); // Output to stdout
     args.push(url);
-    // Set headers before streaming
-    res.setHeader("Content-Disposition", contentDisposition(safeFilename));
-    res.setHeader("Content-Type", "video/mp4");
-    // Start yt-dlp and pipe stdout to response
+
+    // Buffer the first 32KB to check for MP4 header
+    const MAX_HEADER = 32 * 1024;
+    let headerBuffer = Buffer.alloc(0);
+    let headerChecked = false;
+    let streamErrored = false;
+    let processExited = false;
+    let exitCode = 0;
+
+    // Start yt-dlp process
     const ytProcess = ytDlpWrap.exec(args);
-    ytProcess.stdout.pipe(res);
+
     ytProcess.stderr.on("data", (data) => {
       // Optionally log errors
       // console.error("yt-dlp stderr:", data.toString());
     });
+
     ytProcess.on("error", (err) => {
-      console.error("yt-dlp error (stream):", err);
+      streamErrored = true;
       if (!res.headersSent) {
         res.status(500).json({ error: "Download failed", details: err.message });
       } else {
         res.end();
       }
     });
+
     ytProcess.on("close", (code) => {
-      if (code !== 0) {
-        console.error("yt-dlp exited with code", code);
-        if (!res.headersSent) {
-          res.status(500).json({ error: "Download failed (yt-dlp error)" });
-        } else {
-          res.end();
-        }
+      processExited = true;
+      exitCode = code;
+      if (code !== 0 && !res.headersSent) {
+        res.status(500).json({ error: "Download failed (yt-dlp error)" });
       }
     });
+
+    ytProcess.stdout.on("data", function onData(chunk) {
+      if (headerChecked || streamErrored) return;
+      headerBuffer = Buffer.concat([headerBuffer, chunk]);
+      if (headerBuffer.length >= MAX_HEADER) {
+        ytProcess.stdout.removeListener("data", onData);
+        checkAndStream();
+      }
+    });
+    ytProcess.stdout.on("end", () => {
+      if (!headerChecked && !streamErrored) {
+        checkAndStream();
+      }
+    });
+
+    function checkAndStream() {
+      headerChecked = true;
+      // Check for MP4 header (ftyp)
+      const ftypIndex = headerBuffer.indexOf("ftyp");
+      if (ftypIndex === -1) {
+        streamErrored = true;
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Download failed: Not a valid MP4 file. The video may be private, region-locked, or unavailable." });
+        }
+        ytProcess.kill();
+        return;
+      }
+      // Set headers and stream
+      res.setHeader("Content-Disposition", contentDisposition(safeFilename));
+      res.setHeader("Content-Type", "video/mp4");
+      res.write(headerBuffer);
+      ytProcess.stdout.pipe(res, { end: true });
+    }
   } catch (err) {
     console.error("Failed at /api/direct-download (stream) with URL:", url);
     const errMsg = (err && (err.stderr || err.message || "")).toString();
