@@ -13,7 +13,6 @@ const os = require("os");
 const { PassThrough } = require("stream");
 const { spawn } = require("child_process");
 
-
 const isWindows = os.platform() === "win32";
 const ytDlpPath = isWindows
   ? path.resolve(__dirname, "bin", "yt-dlp.exe")
@@ -100,11 +99,13 @@ async function getDirectVideoUrl(url, quality, cookiesFile) {
     // Try to find a direct video URL for the requested quality
     let format = null;
     if (quality) {
-      format = info.formats.find(f => f.format_id === quality && f.url);
+      format = info.formats.find((f) => f.format_id === quality && f.url);
     }
     if (!format) {
       // fallback to best
-      format = info.formats.find(f => f.url && f.vcodec !== "none" && f.acodec !== "none");
+      format = info.formats.find(
+        (f) => f.url && f.vcodec !== "none" && f.acodec !== "none"
+      );
     }
     if (format && format.url) {
       return format.url;
@@ -149,7 +150,7 @@ app.get("/api/downloads", async (req, res) => {
     args.push("-o", "-", url); // Output to stdout
 
     const ytProcess = spawn(ytDlpPath, args, {
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
     });
 
     const stream = new PassThrough();
@@ -189,7 +190,6 @@ app.get("/api/downloads", async (req, res) => {
         console.error("yt-dlp exited with code", code);
       }
     });
-
   } catch (err) {
     console.error("Download failed:", err);
     if (!res.headersSent) {
@@ -199,8 +199,6 @@ app.get("/api/downloads", async (req, res) => {
     }
   }
 });
-
-
 
 // Proxy thumbnail image fetching
 app.get("/api/proxy-thumbnail", async (req, res) => {
@@ -267,6 +265,33 @@ app.post("/api/info", async (req, res) => {
     infoArgs.push(url);
     const info = await ytDlpWrap.getVideoInfo(infoArgs);
 
+    // Start background caching for single video (not playlist)
+    if (!info.entries) {
+      const videoId = info.id || uuidv4();
+      const cacheFile = getCacheFilePath(videoId, null);
+      if (!fs.existsSync(cacheFile)) {
+        // Download in background
+        const args = [
+          "--no-playlist",
+          "-f", "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best",
+          "--merge-output-format", "mp4",
+          "--recode-video", "mp4",
+          "-o", cacheFile,
+          url
+        ];
+        const ytProcess = spawn(ytDlpPath, args, {
+          stdio: ["ignore", "ignore", "ignore"]
+        });
+        ytProcess.on("close", (code) => {
+          if (code === 0) {
+            console.log("Background cache complete:", cacheFile);
+          } else {
+            console.error("Background cache failed for", url);
+          }
+        });
+      }
+    }
+
     // If playlist
     if (info.entries && Array.isArray(info.entries)) {
       res.json({
@@ -286,7 +311,9 @@ app.post("/api/info", async (req, res) => {
     }
   } catch (err) {
     console.error("Failed at POST /api/info:", err);
-    res.status(500).json({ error: "Failed to fetch video info", details: err.message });
+    res
+      .status(500)
+      .json({ error: "Failed to fetch video info", details: err.message });
   }
 });
 
@@ -299,16 +326,15 @@ app.get("/api/download", async (req, res) => {
   }
   try {
     const cookiesFile = getCookiesFile(url);
-    // Get video info for filename and id
     const infoArgs = ["--no-playlist"];
     if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
     infoArgs.push(url);
     const info = await ytDlpWrap.getVideoInfo(infoArgs);
     const videoId = info.id || uuidv4();
     const safeFilename = sanitizeFilename(info.title || videoId) + ".mp4";
-    const cacheFile = getCacheFilePath(videoId, quality);
+    const cacheFile = getCacheFilePath(videoId, null);
 
-    // 1. If cached, serve instantly
+    // Serve cached file instantly if exists
     if (fs.existsSync(cacheFile)) {
       res.setHeader("Content-Disposition", contentDisposition(safeFilename));
       res.setHeader("Content-Type", "video/mp4");
@@ -320,7 +346,8 @@ app.get("/api/download", async (req, res) => {
     const directUrl = await getDirectVideoUrl(url, quality, cookiesFile);
 
     // Only redirect for YouTube (and maybe others), NOT TikTok, Facebook, Instagram
-    const isTikTok = url.includes("tiktok.com") || url.includes("vt.tiktok.com");
+    const isTikTok =
+      url.includes("tiktok.com") || url.includes("vt.tiktok.com");
     const isFacebook = url.includes("facebook.com") || url.includes("fb.watch");
     const isInstagram = url.includes("instagram.com");
 
@@ -346,7 +373,7 @@ app.get("/api/download", async (req, res) => {
     // Run yt-dlp to process and cache
     await new Promise((resolve, reject) => {
       const ytProcess = spawn(ytDlpPath, args, {
-        stdio: ["ignore", "ignore", "pipe"]
+        stdio: ["ignore", "ignore", "pipe"],
       });
       ytProcess.stderr.on("data", (data) => {
         console.error("[yt-dlp stderr]", data.toString());
@@ -363,7 +390,6 @@ app.get("/api/download", async (req, res) => {
     res.setHeader("Content-Type", "video/mp4");
     const readStream = fs.createReadStream(cacheFile);
     readStream.pipe(res);
-
   } catch (err) {
     console.error("Download failed:", err);
     if (!res.headersSent) {
@@ -381,12 +407,12 @@ function cleanupCache() {
   fs.readdir(CACHE_DIR, (err, files) => {
     if (err) return console.error("Cache cleanup error:", err);
     const now = Date.now();
-    files.forEach(file => {
+    files.forEach((file) => {
       const filePath = path.join(CACHE_DIR, file);
       fs.stat(filePath, (err, stats) => {
         if (err) return;
         if (now - stats.mtimeMs > MAX_CACHE_AGE_MS) {
-          fs.unlink(filePath, err => {
+          fs.unlink(filePath, (err) => {
             if (!err) {
               console.log("Deleted old cache file:", filePath);
             }
