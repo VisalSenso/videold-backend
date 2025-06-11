@@ -78,19 +78,32 @@ function isValidVideoUrl(url) {
 app.get("/api/downloads", async (req, res) => {
   const url = req.query.url;
   const quality = req.query.quality;
+
   if (!isValidVideoUrl(url)) {
     return res.status(400).json({ error: "Invalid or unsupported video URL." });
   }
+
+  // Set a placeholder filename early to trigger download bar fast
+  const earlyFilename = sanitizeFilename("video") + ".mp4";
+  res.setHeader("Content-Disposition", contentDisposition(earlyFilename));
+  res.setHeader("Content-Type", "video/mp4");
+  res.setHeader("Transfer-Encoding", "chunked"); // Optional, helps with instant streaming
+
   try {
     const cookiesFile = getCookiesFile(url);
-    // Get video info for filename
+
+    // Now fetch the real info (after headers sent)
     const infoArgs = ["--no-playlist"];
     if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
     infoArgs.push(url);
-    const info = await ytDlpWrap.getVideoInfo(infoArgs);
-    const safeFilename = sanitizeFilename(info.title || uuidv4()) + ".mp4";
 
-    // Build yt-dlp args for streaming
+    const info = await ytDlpWrap.getVideoInfo(infoArgs);
+    const safeFilename = sanitizeFilename(info.title || "video") + ".mp4";
+
+    // Update Content-Disposition with the correct filename if possible
+    res.setHeader("Content-Disposition", contentDisposition(safeFilename));
+
+    // Build yt-dlp args
     const args = ["--no-playlist", "-f"];
     if (url.includes("facebook.com")) {
       args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
@@ -105,13 +118,9 @@ app.get("/api/downloads", async (req, res) => {
     args.push("--recode-video", "mp4");
     args.push("-o", "-", url); // Output to stdout
 
-    res.setHeader("Content-Disposition", contentDisposition(safeFilename));
-    res.setHeader("Content-Type", "video/mp4");
-
+    // Spawn yt-dlp
     const { spawn } = require("child_process");
-    const ytDlpBin = ytDlpPath;
-    const ytArgs = args;
-    const ytProcess = spawn(ytDlpBin, ytArgs, {
+    const ytProcess = spawn(ytDlpPath, args, {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -120,21 +129,29 @@ app.get("/api/downloads", async (req, res) => {
     ytProcess.stderr.on("data", (data) => {
       console.error(`[yt-dlp stderr]`, data.toString());
     });
+
     ytProcess.on("error", (err) => {
       console.error("yt-dlp error (stream):", err);
-      res.status(500).end("yt-dlp error");
+      if (!res.headersSent) res.status(500).end("yt-dlp error");
     });
+
     ytProcess.on("close", (code) => {
       if (code !== 0) {
         console.error("yt-dlp exited with code", code);
       }
     });
+
   } catch (err) {
     console.error("Failed at GET /api/downloads (stream) with URL:", url);
     console.error("Error details:", err.stderr || err.message || err);
-    res.status(500).json({ error: "Download failed", details: err.message });
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Download failed", details: err.message });
+    } else {
+      res.end();
+    }
   }
 });
+
 
 // Proxy thumbnail image fetching
 app.get("/api/proxy-thumbnail", async (req, res) => {
