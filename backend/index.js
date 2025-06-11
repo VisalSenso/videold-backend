@@ -161,7 +161,9 @@ app.post("/api/info", async (req, res) => {
     }
   } catch (err) {
     console.error("Failed at POST /api/info:", err);
-    res.status(500).json({ error: "Failed to fetch video info", details: err.message });
+    res
+      .status(500)
+      .json({ error: "Failed to fetch video info", details: err.message });
   }
 });
 
@@ -183,25 +185,25 @@ app.get("/api/download", async (req, res) => {
     // Find selected format
     let selectedFormat = null;
     if (quality && info.formats) {
-      selectedFormat = info.formats.find(f => f.format_id === quality);
+      selectedFormat = info.formats.find((f) => f.format_id === quality);
     }
 
     // Build yt-dlp args for streaming
     const args = ["--no-playlist", "-f"];
-    if (url.includes("instagram.com")) {
-      // Always merge for Instagram
-      args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
-      args.push("--merge-output-format", "mp4");
-    } else if (selectedFormat && selectedFormat.acodec !== "none" && selectedFormat.vcodec !== "none") {
+    if (
+      selectedFormat &&
+      selectedFormat.acodec !== "none" &&
+      selectedFormat.vcodec !== "none"
+    ) {
+      // Progressive: direct stream
       args.push(quality);
-    } else if (url.includes("facebook.com")) {
-      args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
-      args.push("--merge-output-format", "mp4");
     } else if (quality) {
+      // Not progressive: merge video+audio
       args.push(quality);
       args.push("--merge-output-format", "mp4");
     } else {
-      args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+      // Fallback: best available
+      args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
       args.push("--merge-output-format", "mp4");
     }
     args.push("-o", "-", url); // Output to stdout
@@ -260,29 +262,28 @@ app.post("/api/download-playlist", async (req, res) => {
         selectedFormat = info.formats.find(f => f.format_id === video.quality);
       }
       const args = ["--no-playlist", "-f"];
-      if (video.url.includes("instagram.com")) {
-        // Always merge for Instagram
-        args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
-        args.push("--merge-output-format", "mp4");
-      } else if (selectedFormat && selectedFormat.acodec !== "none" && selectedFormat.vcodec !== "none") {
+      if (selectedFormat && selectedFormat.acodec !== "none" && selectedFormat.vcodec !== "none") {
         args.push(video.quality);
-      } else if (video.url.includes("facebook.com")) {
-        args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
-        args.push("--merge-output-format", "mp4");
       } else if (video.quality) {
         args.push(video.quality);
         args.push("--merge-output-format", "mp4");
       } else {
-        args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+        args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
         args.push("--merge-output-format", "mp4");
       }
       args.push("-o", "-", video.url);
 
-      const ytProcess = spawn(ytDlpPath, args, { stdio: ["ignore", "pipe", "pipe"] });
-      archive.append(ytProcess.stdout, { name: sanitizeFilename(video.title || "video") + ".mp4" });
+      const ytProcess = spawn(ytDlpPath, args, {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      archive.append(ytProcess.stdout, {
+        name: sanitizeFilename(video.title || "video") + ".mp4",
+      });
     } catch (err) {
       // Optionally: add a text file with error info
-      archive.append(`Failed to download: ${video.title || video.url}\n`, { name: `error_${Date.now()}.txt` });
+      archive.append(`Failed to download: ${video.title || video.url}\n`, {
+        name: `error_${Date.now()}.txt`,
+      });
     }
   }
 
