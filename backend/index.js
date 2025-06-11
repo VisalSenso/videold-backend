@@ -265,68 +265,30 @@ app.post("/api/info", async (req, res) => {
     infoArgs.push(url);
     const info = await ytDlpWrap.getVideoInfo(infoArgs);
 
-    // Start background caching for single video (not playlist)
-    if (!info.entries) {
-      const videoId = info.id || uuidv4();
-      const cacheFile = getCacheFilePath(videoId, null);
-      if (!fs.existsSync(cacheFile)) {
-        // Download in background
-        const args = [
-          "--no-playlist",
-          "-f", "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best",
-          "--merge-output-format", "mp4",
-          "--recode-video", "mp4",
-          "-o", cacheFile,
-          url
-        ];
-        const ytProcess = spawn(ytDlpPath, args, {
-          stdio: ["ignore", "ignore", "ignore"]
-        });
-        ytProcess.on("close", (code) => {
-          if (code === 0) {
-            console.log("Background cache complete:", cacheFile);
-          } else {
-            console.error("Background cache failed for", url);
-          }
-        });
-      }
-    }
-
-    // If playlist
-    if (info.entries && Array.isArray(info.entries)) {
-      res.json({
-        isPlaylist: true,
-        playlistTitle: info.title,
-        videos: info.entries.map((entry) => ({
-          id: entry.id,
-          title: entry.title,
-          url: entry.url || entry.webpage_url,
-          thumbnail: entry.thumbnail,
-          formats: entry.formats,
-        })),
-      });
-    } else {
-      // Single video
-      res.json(info);
-    }
-
-    // In /api/info, after fetching info:
+    // Only cache "best" video+audio and "audio only"
     if (!info.entries && info.formats) {
-      // Cache all available formats (or just the most popular ones)
-      const formatsToCache = info.formats
-        .filter(
-          (f) => f.ext === "mp4" && f.vcodec !== "none" && f.acodec !== "none"
-        )
-        .slice(0, 3); // Limit to top 3 formats for disk space
+      const videoId = info.id || uuidv4();
 
-      formatsToCache.forEach((format) => {
-        const videoId = info.id || uuidv4();
-        const cacheFile = getCacheFilePath(videoId, format.format_id);
+      // Find best video+audio (mp4)
+      const bestFormat = info.formats.find(
+        (f) => f.ext === "mp4" && f.vcodec !== "none" && f.acodec !== "none"
+      );
+      // Find best audio only (m4a or mp3)
+      const bestAudio = info.formats.find(
+        (f) =>
+          (f.ext === "m4a" || f.ext === "mp3") &&
+          f.vcodec === "none" &&
+          f.acodec !== "none"
+      );
+
+      // Cache best video+audio
+      if (bestFormat) {
+        const cacheFile = getCacheFilePath(videoId, bestFormat.format_id);
         if (!fs.existsSync(cacheFile)) {
           const args = [
             "--no-playlist",
             "-f",
-            format.format_id,
+            bestFormat.format_id,
             "--merge-output-format",
             "mp4",
             "--recode-video",
@@ -342,15 +304,71 @@ app.post("/api/info", async (req, res) => {
             if (code === 0) {
               console.log("Background cache complete:", cacheFile);
             } else {
-              console.error(
-                "Background cache failed for",
-                url,
-                "format",
-                format.format_id
-              );
+              console.error("Background cache failed for", url, "format", bestFormat.format_id);
             }
           });
         }
+      }
+
+      // Cache best audio only
+      if (bestAudio) {
+        const cacheFile = getCacheFilePath(videoId, bestAudio.format_id);
+        if (!fs.existsSync(cacheFile)) {
+          const args = [
+            "--no-playlist",
+            "-f",
+            bestAudio.format_id,
+            "--merge-output-format",
+            bestAudio.ext,
+            "-o",
+            cacheFile,
+            url,
+          ];
+          const ytProcess = spawn(ytDlpPath, args, {
+            stdio: ["ignore", "ignore", "ignore"],
+          });
+          ytProcess.on("close", (code) => {
+            if (code === 0) {
+              console.log("Background cache complete:", cacheFile);
+            } else {
+              console.error("Background cache failed for", url, "format", bestAudio.format_id);
+            }
+          });
+        }
+      }
+    }
+
+    // Respond with only these two formats in the UI
+    if (!info.entries && info.formats) {
+      const videoId = info.id || uuidv4();
+      const bestFormat = info.formats.find(
+        (f) => f.ext === "mp4" && f.vcodec !== "none" && f.acodec !== "none"
+      );
+      const bestAudio = info.formats.find(
+        (f) =>
+          (f.ext === "m4a" || f.ext === "mp3") &&
+          f.vcodec === "none" &&
+          f.acodec !== "none"
+      );
+      res.json({
+        ...info,
+        formats: [bestFormat, bestAudio].filter(Boolean),
+      });
+      return;
+    }
+
+    // Playlist logic unchanged
+    if (info.entries && Array.isArray(info.entries)) {
+      res.json({
+        isPlaylist: true,
+        playlistTitle: info.title,
+        videos: info.entries.map((entry) => ({
+          id: entry.id,
+          title: entry.title,
+          url: entry.url || entry.webpage_url,
+          thumbnail: entry.thumbnail,
+          formats: entry.formats,
+        })),
       });
     }
   } catch (err) {
