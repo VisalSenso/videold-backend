@@ -309,6 +309,50 @@ app.post("/api/info", async (req, res) => {
       // Single video
       res.json(info);
     }
+
+    // In /api/info, after fetching info:
+    if (!info.entries && info.formats) {
+      // Cache all available formats (or just the most popular ones)
+      const formatsToCache = info.formats
+        .filter(
+          (f) => f.ext === "mp4" && f.vcodec !== "none" && f.acodec !== "none"
+        )
+        .slice(0, 3); // Limit to top 3 formats for disk space
+
+      formatsToCache.forEach((format) => {
+        const videoId = info.id || uuidv4();
+        const cacheFile = getCacheFilePath(videoId, format.format_id);
+        if (!fs.existsSync(cacheFile)) {
+          const args = [
+            "--no-playlist",
+            "-f",
+            format.format_id,
+            "--merge-output-format",
+            "mp4",
+            "--recode-video",
+            "mp4",
+            "-o",
+            cacheFile,
+            url,
+          ];
+          const ytProcess = spawn(ytDlpPath, args, {
+            stdio: ["ignore", "ignore", "ignore"],
+          });
+          ytProcess.on("close", (code) => {
+            if (code === 0) {
+              console.log("Background cache complete:", cacheFile);
+            } else {
+              console.error(
+                "Background cache failed for",
+                url,
+                "format",
+                format.format_id
+              );
+            }
+          });
+        }
+      });
+    }
   } catch (err) {
     console.error("Failed at POST /api/info:", err);
     res
@@ -332,7 +376,7 @@ app.get("/api/download", async (req, res) => {
     const info = await ytDlpWrap.getVideoInfo(infoArgs);
     const videoId = info.id || uuidv4();
     const safeFilename = sanitizeFilename(info.title || videoId) + ".mp4";
-    const cacheFile = getCacheFilePath(videoId, null);
+    const cacheFile = getCacheFilePath(videoId, quality || "best");
 
     // Serve cached file instantly if exists
     if (fs.existsSync(cacheFile)) {
