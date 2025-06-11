@@ -188,7 +188,8 @@ app.get(/^\/(?!api\/).*/, (req, res) => {
   res.sendFile(path.join(__dirname, "../video-downloader/dist/index.html"));
 });
 
-app.post("/api/downloads", async (req, res) => {
+// POST /api/info - fetch video info (for frontend)
+app.post("/api/info", async (req, res) => {
   const { url } = req.body;
   if (!isValidVideoUrl(url)) {
     return res.status(400).json({ error: "Invalid or unsupported video URL." });
@@ -218,8 +219,70 @@ app.post("/api/downloads", async (req, res) => {
       res.json(info);
     }
   } catch (err) {
-    console.error("Failed at POST /api/downloads:", err);
+    console.error("Failed at POST /api/info:", err);
     res.status(500).json({ error: "Failed to fetch video info", details: err.message });
+  }
+});
+
+// GET /api/download - stream video to browser
+app.get("/api/download", async (req, res) => {
+  const url = req.query.url;
+  const quality = req.query.quality;
+  if (!isValidVideoUrl(url)) {
+    return res.status(400).json({ error: "Invalid or unsupported video URL." });
+  }
+  try {
+    const cookiesFile = getCookiesFile(url);
+    // Get video info for filename
+    const infoArgs = ["--no-playlist"];
+    if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
+    infoArgs.push(url);
+    const info = await ytDlpWrap.getVideoInfo(infoArgs);
+    const safeFilename = sanitizeFilename(info.title || uuidv4()) + ".mp4";
+
+    // Build yt-dlp args for streaming
+    const args = ["--no-playlist", "-f"];
+    if (url.includes("facebook.com")) {
+      args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+    } else if (url.includes("instagram.com")) {
+      args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
+    } else if (quality) {
+      args.push(quality);
+    } else {
+      args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+    }
+    args.push("--merge-output-format", "mp4");
+    args.push("--recode-video", "mp4");
+    args.push("-o", "-", url); // Output to stdout
+
+    res.setHeader("Content-Disposition", contentDisposition(safeFilename));
+    res.setHeader("Content-Type", "video/mp4");
+
+    const { spawn } = require("child_process");
+    const ytDlpBin = ytDlpPath;
+    const ytArgs = args;
+    const ytProcess = spawn(ytDlpBin, ytArgs, {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    ytProcess.stdout.pipe(res, { end: true });
+
+    ytProcess.stderr.on("data", (data) => {
+      console.error(`[yt-dlp stderr]`, data.toString());
+    });
+    ytProcess.on("error", (err) => {
+      console.error("yt-dlp error (stream):", err);
+      res.status(500).end("yt-dlp error");
+    });
+    ytProcess.on("close", (code) => {
+      if (code !== 0) {
+        console.error("yt-dlp exited with code", code);
+      }
+    });
+  } catch (err) {
+    console.error("Failed at GET /api/download (stream) with URL:", url);
+    console.error("Error details:", err.stderr || err.message || err);
+    res.status(500).json({ error: "Download failed", details: err.message });
   }
 });
 
