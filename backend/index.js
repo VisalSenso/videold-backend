@@ -346,19 +346,27 @@ app.post("/api/info", async (req, res) => {
     // Respond with only these two formats in the UI
     if (!info.entries && info.formats) {
       const videoId = info.id || uuidv4();
+      // Only consider formats with a valid url and format_id
       const bestFormat = info.formats.find(
-        (f) => f.ext === "mp4" && f.vcodec !== "none" && f.acodec !== "none"
+        (f) =>
+          f.ext === "mp4" &&
+          f.vcodec !== "none" &&
+          f.acodec !== "none" &&
+          f.url &&
+          f.format_id
       );
       const bestAudio = info.formats.find(
         (f) =>
           (f.ext === "m4a" || f.ext === "mp3") &&
           f.vcodec === "none" &&
-          f.acodec !== "none"
+          f.acodec !== "none" &&
+          f.url &&
+          f.format_id
       );
       let formatsToShow = [bestFormat, bestAudio].filter(Boolean);
       if (formatsToShow.length === 0) {
-        // fallback: show all formats with a url
-        formatsToShow = info.formats.filter(f => f.url);
+        // fallback: show all formats with a url and format_id
+        formatsToShow = info.formats.filter(f => f.url && f.format_id);
       }
       res.json({
         ...info,
