@@ -10,6 +10,9 @@ const contentDisposition = require("content-disposition");
 const http = require("http");
 const { body, validationResult } = require("express-validator");
 const os = require("os");
+const { PassThrough } = require("stream");
+const { spawn } = require("child_process");
+
 
 const isWindows = os.platform() === "win32";
 const ytDlpPath = isWindows
@@ -83,20 +86,14 @@ app.get("/api/downloads", async (req, res) => {
     return res.status(400).json({ error: "Invalid or unsupported video URL." });
   }
 
-  // Set basic headers early
-  const filename = sanitizeFilename("video") + ".mp4";
-  res.setHeader("Content-Disposition", contentDisposition(filename));
-  res.setHeader("Content-Type", "video/mp4");
-  res.setHeader("Transfer-Encoding", "chunked");
-  res.setHeader("Cache-Control", "no-cache");
-
-  // 🟡 Force browser to show the download bar by sending a small dummy byte early
-  res.write(" ");
-
   try {
     const cookiesFile = getCookiesFile(url);
+    const infoArgs = ["--no-playlist"];
+    if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
+    infoArgs.push(url);
+    const info = await ytDlpWrap.getVideoInfo(infoArgs);
+    const safeFilename = sanitizeFilename(info.title || "video") + ".mp4";
 
-    // Build yt-dlp arguments
     const args = ["--no-playlist", "-f"];
     if (url.includes("facebook.com")) {
       args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
@@ -107,15 +104,38 @@ app.get("/api/downloads", async (req, res) => {
     } else {
       args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
     }
-    args.push("--merge-output-format", "mp4", "--recode-video", "mp4", "-o", "-", url);
-    if (cookiesFile) args.push("--cookies", cookiesFile);
 
-    const { spawn } = require("child_process");
+    args.push("--merge-output-format", "mp4");
+    args.push("--recode-video", "mp4");
+    args.push("-o", "-", url); // Output to stdout
+
     const ytProcess = spawn(ytDlpPath, args, {
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe"]
     });
 
-    ytProcess.stdout.pipe(res);
+    const buffer = [];
+    let bufferedSize = 0;
+    const MAX_BUFFER = 512 * 1024; // 512KB for head-start
+
+    ytProcess.stdout.on("data", (chunk) => {
+      buffer.push(chunk);
+      bufferedSize += chunk.length;
+
+      if (bufferedSize >= MAX_BUFFER) {
+        // Headers sent here, once valid video starts
+        res.setHeader("Content-Disposition", contentDisposition(safeFilename));
+        res.setHeader("Content-Type", "video/mp4");
+        res.setHeader("Transfer-Encoding", "chunked");
+
+        // Pipe already buffered data
+        const stream = new PassThrough();
+        for (const part of buffer) {
+          stream.write(part);
+        }
+        ytProcess.stdout.pipe(stream);
+        stream.pipe(res);
+      }
+    });
 
     ytProcess.stderr.on("data", (data) => {
       console.error("[yt-dlp stderr]", data.toString());
