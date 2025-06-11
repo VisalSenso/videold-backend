@@ -114,34 +114,17 @@ app.get("/api/downloads", async (req, res) => {
       stdio: ["ignore", "pipe", "pipe"]
     });
 
-    const buffer = [];
-    let bufferedSize = 0;
-    const MAX_BUFFER = 512 * 1024;
-    let startedStreaming = false;
+    const stream = new PassThrough();
     let responseEnded = false;
 
-    // Set headers first
+    // Set headers immediately
     res.setHeader("Content-Disposition", contentDisposition(safeFilename));
     res.setHeader("Content-Type", "video/mp4");
     res.setHeader("Transfer-Encoding", "chunked");
 
-    const stream = new PassThrough();
+    // Pipe the yt-dlp output directly to client
     stream.pipe(res);
-
-    ytProcess.stdout.on("data", (chunk) => {
-      if (!startedStreaming) {
-        buffer.push(chunk);
-        bufferedSize += chunk.length;
-
-        if (bufferedSize >= MAX_BUFFER) {
-          for (const part of buffer) {
-            stream.write(part);
-          }
-          ytProcess.stdout.pipe(stream);
-          startedStreaming = true;
-        }
-      }
-    });
+    ytProcess.stdout.pipe(stream);
 
     ytProcess.stderr.on("data", (data) => {
       console.error("[yt-dlp stderr]", data.toString());
@@ -154,18 +137,18 @@ app.get("/api/downloads", async (req, res) => {
         if (!res.headersSent) {
           res.status(500).end("yt-dlp error");
         } else {
-          stream.end(); // ends the PassThrough stream
+          stream.end();
         }
       }
     });
 
     ytProcess.on("close", (code) => {
-      if (code !== 0) {
-        console.error("yt-dlp exited with code", code);
-      }
       if (!responseEnded) {
         responseEnded = true;
-        stream.end(); // Finish response
+        stream.end();
+      }
+      if (code !== 0) {
+        console.error("yt-dlp exited with code", code);
       }
     });
 
@@ -178,6 +161,7 @@ app.get("/api/downloads", async (req, res) => {
     }
   }
 });
+
 
 
 // Proxy thumbnail image fetching
