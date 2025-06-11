@@ -12,7 +12,7 @@ const { body, validationResult } = require("express-validator");
 const os = require("os");
 const { PassThrough } = require("stream");
 const { spawn } = require("child_process");
-
+const archiver = require("archiver"); // npm install archiver
 
 const isWindows = os.platform() === "win32";
 const ytDlpPath = isWindows
@@ -330,6 +330,51 @@ app.get("/api/download", async (req, res) => {
     console.error("Error details:", err.stderr || err.message || err);
     res.status(500).json({ error: "Download failed", details: err.message });
   }
+});
+
+// POST /api/download-playlist - download multiple videos as zip
+app.post("/api/download-playlist", async (req, res) => {
+  const { videos } = req.body; // [{url, quality, title}]
+  if (!Array.isArray(videos) || videos.length === 0) {
+    return res.status(400).json({ error: "No videos provided" });
+  }
+
+  res.setHeader("Content-Disposition", contentDisposition("playlist.zip"));
+  res.setHeader("Content-Type", "application/zip");
+
+  const archive = archiver("zip", { zlib: { level: 9 } });
+  archive.pipe(res);
+
+  for (const video of videos) {
+    try {
+      const infoArgs = ["--no-playlist"];
+      const cookiesFile = getCookiesFile(video.url);
+      if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
+      infoArgs.push(video.url);
+
+      const info = await ytDlpWrap.getVideoInfo(infoArgs);
+      let selectedFormat = null;
+      if (video.quality && info.formats) {
+        selectedFormat = info.formats.find(f => f.format_id === video.quality);
+      }
+      const args = ["--no-playlist", "-f"];
+      if (selectedFormat && selectedFormat.acodec !== "none" && selectedFormat.vcodec !== "none") {
+        args.push(video.quality);
+      } else {
+        args.push("best");
+        args.push("--merge-output-format", "mp4");
+      }
+      args.push("-o", "-", video.url);
+
+      const ytProcess = spawn(ytDlpPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+      archive.append(ytProcess.stdout, { name: sanitizeFilename(video.title || "video") + ".mp4" });
+    } catch (err) {
+      // Optionally: add a text file with error info
+      archive.append(`Failed to download: ${video.title || video.url}\n`, { name: `error_${Date.now()}.txt` });
+    }
+  }
+
+  archive.finalize();
 });
 
 server.listen(PORT, () => {
