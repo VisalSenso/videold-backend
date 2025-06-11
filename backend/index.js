@@ -271,14 +271,19 @@ app.post("/api/info", async (req, res) => {
 
       // Find best video+audio (mp4)
       const bestFormat = info.formats.find(
-        (f) => f.ext === "mp4" && f.vcodec !== "none" && f.acodec !== "none"
+        (f) =>
+          f.ext === "mp4" &&
+          f.vcodec !== "none" &&
+          f.acodec !== "none" &&
+          (f.filesize || f.url) // Only if downloadable
       );
       // Find best audio only (m4a or mp3)
       const bestAudio = info.formats.find(
         (f) =>
           (f.ext === "m4a" || f.ext === "mp3") &&
           f.vcodec === "none" &&
-          f.acodec !== "none"
+          f.acodec !== "none" &&
+          (f.filesize || f.url)
       );
 
       // Cache best video+audio
@@ -350,9 +355,14 @@ app.post("/api/info", async (req, res) => {
           f.vcodec === "none" &&
           f.acodec !== "none"
       );
+      let formatsToShow = [bestFormat, bestAudio].filter(Boolean);
+      if (formatsToShow.length === 0) {
+        // fallback: show all formats with a url
+        formatsToShow = info.formats.filter(f => f.url);
+      }
       res.json({
         ...info,
-        formats: [bestFormat, bestAudio].filter(Boolean),
+        formats: formatsToShow,
       });
       return;
     }
