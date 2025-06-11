@@ -77,6 +77,44 @@ function isValidVideoUrl(url) {
   );
 }
 
+// This implementation adds:
+// 1. Caching of processed videos in a local folder (cache by video ID and quality)
+// 2. If a direct video URL is available, redirect the browser to it for instant download
+// 3. If not cached and no direct link, process with yt-dlp, cache, and then serve
+
+const CACHE_DIR = path.join(__dirname, "video_cache");
+if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR);
+
+// Helper: get cache file path by videoId and quality
+function getCacheFilePath(videoId, quality) {
+  return path.join(CACHE_DIR, `${videoId}_${quality || "best"}.mp4`);
+}
+
+// Helper: try to extract direct video URL (for instant redirect)
+async function getDirectVideoUrl(url, quality, cookiesFile) {
+  try {
+    const infoArgs = ["--no-playlist", "--dump-json"];
+    if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
+    infoArgs.push(url);
+    const info = await ytDlpWrap.getVideoInfo(infoArgs);
+    // Try to find a direct video URL for the requested quality
+    let format = null;
+    if (quality) {
+      format = info.formats.find(f => f.format_id === quality && f.url);
+    }
+    if (!format) {
+      // fallback to best
+      format = info.formats.find(f => f.url && f.vcodec !== "none" && f.acodec !== "none");
+    }
+    if (format && format.url) {
+      return format.url;
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
 // API: download video (GET for direct browser download, stream instantly)
 app.get("/api/downloads", async (req, res) => {
   const url = req.query.url;
@@ -252,7 +290,7 @@ app.post("/api/info", async (req, res) => {
   }
 });
 
-// GET /api/download - stream video to browser
+// GET /api/download - improved: cache, direct link, or process
 app.get("/api/download", async (req, res) => {
   const url = req.query.url;
   const quality = req.query.quality;
@@ -261,14 +299,31 @@ app.get("/api/download", async (req, res) => {
   }
   try {
     const cookiesFile = getCookiesFile(url);
-    // Get video info for filename
+    // Get video info for filename and id
     const infoArgs = ["--no-playlist"];
     if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
     infoArgs.push(url);
     const info = await ytDlpWrap.getVideoInfo(infoArgs);
-    const safeFilename = sanitizeFilename(info.title || uuidv4()) + ".mp4";
+    const videoId = info.id || uuidv4();
+    const safeFilename = sanitizeFilename(info.title || videoId) + ".mp4";
+    const cacheFile = getCacheFilePath(videoId, quality);
 
-    // Build yt-dlp args for streaming
+    // 1. If cached, serve instantly
+    if (fs.existsSync(cacheFile)) {
+      res.setHeader("Content-Disposition", contentDisposition(safeFilename));
+      res.setHeader("Content-Type", "video/mp4");
+      const readStream = fs.createReadStream(cacheFile);
+      return readStream.pipe(res);
+    }
+
+    // 2. Try to get a direct video URL and redirect
+    const directUrl = await getDirectVideoUrl(url, quality, cookiesFile);
+    if (directUrl) {
+      // Optionally, you can check if the directUrl is a real MP4 file
+      return res.redirect(directUrl);
+    }
+
+    // 3. Not cached and no direct link: process and cache
     const args = ["--no-playlist", "-f"];
     if (url.includes("facebook.com")) {
       args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
@@ -281,38 +336,66 @@ app.get("/api/download", async (req, res) => {
     }
     args.push("--merge-output-format", "mp4");
     args.push("--recode-video", "mp4");
-    args.push("-o", "-", url); // Output to stdout
+    args.push("-o", cacheFile, url); // Output to cache file
 
+    // Run yt-dlp to process and cache
+    await new Promise((resolve, reject) => {
+      const ytProcess = spawn(ytDlpPath, args, {
+        stdio: ["ignore", "ignore", "pipe"]
+      });
+      ytProcess.stderr.on("data", (data) => {
+        console.error("[yt-dlp stderr]", data.toString());
+      });
+      ytProcess.on("error", reject);
+      ytProcess.on("close", (code) => {
+        if (code === 0) resolve();
+        else reject(new Error("yt-dlp exited with code " + code));
+      });
+    });
+
+    // Serve the cached file
     res.setHeader("Content-Disposition", contentDisposition(safeFilename));
     res.setHeader("Content-Type", "video/mp4");
+    const readStream = fs.createReadStream(cacheFile);
+    readStream.pipe(res);
 
-    const { spawn } = require("child_process");
-    const ytDlpBin = ytDlpPath;
-    const ytArgs = args;
-    const ytProcess = spawn(ytDlpBin, ytArgs, {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    ytProcess.stdout.pipe(res, { end: true });
-
-    ytProcess.stderr.on("data", (data) => {
-      console.error(`[yt-dlp stderr]`, data.toString());
-    });
-    ytProcess.on("error", (err) => {
-      console.error("yt-dlp error (stream):", err);
-      res.status(500).end("yt-dlp error");
-    });
-    ytProcess.on("close", (code) => {
-      if (code !== 0) {
-        console.error("yt-dlp exited with code", code);
-      }
-    });
   } catch (err) {
-    console.error("Failed at GET /api/download (stream) with URL:", url);
-    console.error("Error details:", err.stderr || err.message || err);
-    res.status(500).json({ error: "Download failed", details: err.message });
+    console.error("Download failed:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Download failed", details: err.message });
+    } else {
+      res.end();
+    }
   }
 });
+
+// Cache cleanup: Remove files older than MAX_CACHE_AGE_MS (e.g. 7 days)
+const MAX_CACHE_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+function cleanupCache() {
+  fs.readdir(CACHE_DIR, (err, files) => {
+    if (err) return console.error("Cache cleanup error:", err);
+    const now = Date.now();
+    files.forEach(file => {
+      const filePath = path.join(CACHE_DIR, file);
+      fs.stat(filePath, (err, stats) => {
+        if (err) return;
+        if (now - stats.mtimeMs > MAX_CACHE_AGE_MS) {
+          fs.unlink(filePath, err => {
+            if (!err) {
+              console.log("Deleted old cache file:", filePath);
+            }
+          });
+        }
+      });
+    });
+  });
+}
+
+// Run cache cleanup every 12 hours
+setInterval(cleanupCache, 12 * 60 * 60 * 1000);
+// Also run on server start
+cleanupCache();
 
 server.listen(PORT, () => {
   console.log(`✅ Backend running at http://localhost:${PORT}`);
