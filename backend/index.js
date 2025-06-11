@@ -188,6 +188,41 @@ app.get(/^\/(?!api\/).*/, (req, res) => {
   res.sendFile(path.join(__dirname, "../video-downloader/dist/index.html"));
 });
 
+app.post("/api/downloads", async (req, res) => {
+  const { url } = req.body;
+  if (!isValidVideoUrl(url)) {
+    return res.status(400).json({ error: "Invalid or unsupported video URL." });
+  }
+  try {
+    const cookiesFile = getCookiesFile(url);
+    const infoArgs = ["--no-playlist"];
+    if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
+    infoArgs.push(url);
+    const info = await ytDlpWrap.getVideoInfo(infoArgs);
+
+    // If playlist
+    if (info.entries && Array.isArray(info.entries)) {
+      res.json({
+        isPlaylist: true,
+        playlistTitle: info.title,
+        videos: info.entries.map((entry) => ({
+          id: entry.id,
+          title: entry.title,
+          url: entry.url || entry.webpage_url,
+          thumbnail: entry.thumbnail,
+          formats: entry.formats,
+        })),
+      });
+    } else {
+      // Single video
+      res.json(info);
+    }
+  } catch (err) {
+    console.error("Failed at POST /api/downloads:", err);
+    res.status(500).json({ error: "Failed to fetch video info", details: err.message });
+  }
+});
+
 server.listen(PORT, () => {
   console.log(`✅ Backend running at http://localhost:${PORT}`);
 });
