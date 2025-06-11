@@ -167,7 +167,6 @@ app.post("/api/info", async (req, res) => {
   }
 });
 
-// GET /api/download - stream video to browser
 app.get("/api/download", async (req, res) => {
   const url = req.query.url;
   const quality = req.query.quality;
@@ -176,51 +175,35 @@ app.get("/api/download", async (req, res) => {
   }
   try {
     const cookiesFile = getCookiesFile(url);
+    // Get video info for filename
     const infoArgs = ["--no-playlist"];
     if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
     infoArgs.push(url);
     const info = await ytDlpWrap.getVideoInfo(infoArgs);
     const safeFilename = sanitizeFilename(info.title || uuidv4()) + ".mp4";
 
-    // Find selected format
-    let selectedFormat = null;
-    if (quality && info.formats) {
-      selectedFormat = info.formats.find((f) => f.format_id === quality);
-    }
-
     // Build yt-dlp args for streaming
     const args = ["--no-playlist", "-f"];
-    if (
-      selectedFormat &&
-      selectedFormat.acodec !== "none" &&
-      selectedFormat.vcodec !== "none"
-    ) {
-      // Progressive: direct stream
-      args.push(quality);
-    } else if (quality) {
-      // Not progressive: merge video+audio
-      args.push(quality);
-      // Always merge for Instagram and TikTok if not progressive
-      if (
-        url.includes("instagram.com") ||
-        url.includes("tiktok.com") ||
-        url.includes("vt.tiktok.com")
-      ) {
-        args.push("--merge-output-format", "mp4");
-      } else {
-        args.push("--merge-output-format", "mp4");
-      }
-    } else {
-      // Fallback: best available
+    if (url.includes("facebook.com")) {
+      args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+    } else if (url.includes("instagram.com")) {
       args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
-      args.push("--merge-output-format", "mp4");
+    } else if (quality) {
+      args.push(quality);
+    } else {
+      args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
     }
+    args.push("--merge-output-format", "mp4");
+    args.push("--recode-video", "mp4");
     args.push("-o", "-", url); // Output to stdout
 
     res.setHeader("Content-Disposition", contentDisposition(safeFilename));
     res.setHeader("Content-Type", "video/mp4");
 
-    const ytProcess = spawn(ytDlpPath, args, {
+    const { spawn } = require("child_process");
+    const ytDlpBin = ytDlpPath;
+    const ytArgs = args;
+    const ytProcess = spawn(ytDlpBin, ytArgs, {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -268,10 +251,16 @@ app.post("/api/download-playlist", async (req, res) => {
       const info = await ytDlpWrap.getVideoInfo(infoArgs);
       let selectedFormat = null;
       if (video.quality && info.formats) {
-        selectedFormat = info.formats.find(f => f.format_id === video.quality);
+        selectedFormat = info.formats.find(
+          (f) => f.format_id === video.quality
+        );
       }
       const args = ["--no-playlist", "-f"];
-      if (selectedFormat && selectedFormat.acodec !== "none" && selectedFormat.vcodec !== "none") {
+      if (
+        selectedFormat &&
+        selectedFormat.acodec !== "none" &&
+        selectedFormat.vcodec !== "none"
+      ) {
         args.push(video.quality);
       } else if (video.quality) {
         args.push(video.quality);
