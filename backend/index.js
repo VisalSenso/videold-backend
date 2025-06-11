@@ -77,104 +77,6 @@ function isValidVideoUrl(url) {
   );
 }
 
-// API: download video (GET for direct browser download, stream instantly)
-app.get("/api/downloads", async (req, res) => {
-  const url = req.query.url;
-  const quality = req.query.quality;
-
-  if (!isValidVideoUrl(url)) {
-    return res.status(400).json({ error: "Invalid or unsupported video URL." });
-  }
-
-  try {
-    const cookiesFile = getCookiesFile(url);
-    const infoArgs = ["--no-playlist"];
-    if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
-    infoArgs.push(url);
-
-    const info = await ytDlpWrap.getVideoInfo(infoArgs);
-    const safeFilename = sanitizeFilename(info.title || "video") + ".mp4";
-
-    // Find selected format
-    let selectedFormat = null;
-    if (quality && info.formats) {
-      selectedFormat = info.formats.find(f => f.format_id === quality);
-    }
-
-    // Build yt-dlp args for streaming
-    const args = ["--no-playlist", "-f"];
-    if (selectedFormat && selectedFormat.acodec !== "none" && selectedFormat.vcodec !== "none") {
-      // Progressive format, no merge/recode needed
-      args.push(quality);
-    } else if (url.includes("facebook.com")) {
-      args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
-      args.push("--merge-output-format", "mp4");
-    } else if (url.includes("instagram.com")) {
-      args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
-      args.push("--merge-output-format", "mp4");
-    } else if (quality) {
-      args.push(quality);
-      args.push("--merge-output-format", "mp4");
-    } else {
-      args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
-      args.push("--merge-output-format", "mp4");
-    }
-    args.push("-o", "-", url); // Output to stdout
-
-    const ytProcess = spawn(ytDlpPath, args, {
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-
-    const stream = new PassThrough();
-    let responseEnded = false;
-
-    // Set headers immediately
-    res.setHeader("Content-Disposition", contentDisposition(safeFilename));
-    res.setHeader("Content-Type", "video/mp4");
-    res.setHeader("Transfer-Encoding", "chunked");
-
-    // Pipe the yt-dlp output directly to client
-    stream.pipe(res);
-    ytProcess.stdout.pipe(stream);
-
-    ytProcess.stderr.on("data", (data) => {
-      console.error("[yt-dlp stderr]", data.toString());
-    });
-
-    ytProcess.on("error", (err) => {
-      console.error("yt-dlp error (stream):", err);
-      if (!responseEnded) {
-        responseEnded = true;
-        if (!res.headersSent) {
-          res.status(500).end("yt-dlp error");
-        } else {
-          stream.end();
-        }
-      }
-    });
-
-    ytProcess.on("close", (code) => {
-      if (!responseEnded) {
-        responseEnded = true;
-        stream.end();
-      }
-      if (code !== 0) {
-        console.error("yt-dlp exited with code", code);
-      }
-    });
-
-  } catch (err) {
-    console.error("Download failed:", err);
-    if (!res.headersSent) {
-      res.status(500).json({ error: "Download failed", details: err.message });
-    } else {
-      res.end();
-    }
-  }
-});
-
-
-
 // Proxy thumbnail image fetching
 app.get("/api/proxy-thumbnail", async (req, res) => {
   const { url } = req.query;
@@ -286,14 +188,14 @@ app.get("/api/download", async (req, res) => {
 
     // Build yt-dlp args for streaming
     const args = ["--no-playlist", "-f"];
-    if (selectedFormat && selectedFormat.acodec !== "none" && selectedFormat.vcodec !== "none") {
-      // Progressive format, no merge/recode needed
+    if (url.includes("instagram.com")) {
+      // Always merge for Instagram
+      args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
+      args.push("--merge-output-format", "mp4");
+    } else if (selectedFormat && selectedFormat.acodec !== "none" && selectedFormat.vcodec !== "none") {
       args.push(quality);
     } else if (url.includes("facebook.com")) {
       args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
-      args.push("--merge-output-format", "mp4");
-    } else if (url.includes("instagram.com")) {
-      args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
       args.push("--merge-output-format", "mp4");
     } else if (quality) {
       args.push(quality);
