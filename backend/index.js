@@ -260,10 +260,20 @@ app.post("/api/download-playlist", async (req, res) => {
         selectedFormat = info.formats.find(f => f.format_id === video.quality);
       }
       const args = ["--no-playlist", "-f"];
-      if (selectedFormat && selectedFormat.acodec !== "none" && selectedFormat.vcodec !== "none") {
+      if (video.url.includes("instagram.com")) {
+        // Always merge for Instagram
+        args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
+        args.push("--merge-output-format", "mp4");
+      } else if (selectedFormat && selectedFormat.acodec !== "none" && selectedFormat.vcodec !== "none") {
         args.push(video.quality);
+      } else if (video.url.includes("facebook.com")) {
+        args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+        args.push("--merge-output-format", "mp4");
+      } else if (video.quality) {
+        args.push(video.quality);
+        args.push("--merge-output-format", "mp4");
       } else {
-        args.push("best");
+        args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
         args.push("--merge-output-format", "mp4");
       }
       args.push("-o", "-", video.url);
