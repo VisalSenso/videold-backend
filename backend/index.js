@@ -95,19 +95,30 @@ app.get("/api/downloads", async (req, res) => {
     const info = await ytDlpWrap.getVideoInfo(infoArgs);
     const safeFilename = sanitizeFilename(info.title || "video") + ".mp4";
 
-    const args = ["--no-playlist", "-f"];
-    if (url.includes("facebook.com")) {
-      args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
-    } else if (url.includes("instagram.com")) {
-      args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
-    } else if (quality) {
-      args.push(quality);
-    } else {
-      args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+    // Find selected format
+    let selectedFormat = null;
+    if (quality && info.formats) {
+      selectedFormat = info.formats.find(f => f.format_id === quality);
     }
 
-    args.push("--merge-output-format", "mp4");
-    args.push("--recode-video", "mp4");
+    // Build yt-dlp args for streaming
+    const args = ["--no-playlist", "-f"];
+    if (selectedFormat && selectedFormat.acodec !== "none" && selectedFormat.vcodec !== "none") {
+      // Progressive format, no merge/recode needed
+      args.push(quality);
+    } else if (url.includes("facebook.com")) {
+      args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+      args.push("--merge-output-format", "mp4");
+    } else if (url.includes("instagram.com")) {
+      args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
+      args.push("--merge-output-format", "mp4");
+    } else if (quality) {
+      args.push(quality);
+      args.push("--merge-output-format", "mp4");
+    } else {
+      args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+      args.push("--merge-output-format", "mp4");
+    }
     args.push("-o", "-", url); // Output to stdout
 
     const ytProcess = spawn(ytDlpPath, args, {
@@ -261,35 +272,42 @@ app.get("/api/download", async (req, res) => {
   }
   try {
     const cookiesFile = getCookiesFile(url);
-    // Get video info for filename
     const infoArgs = ["--no-playlist"];
     if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
     infoArgs.push(url);
     const info = await ytDlpWrap.getVideoInfo(infoArgs);
     const safeFilename = sanitizeFilename(info.title || uuidv4()) + ".mp4";
 
+    // Find selected format
+    let selectedFormat = null;
+    if (quality && info.formats) {
+      selectedFormat = info.formats.find(f => f.format_id === quality);
+    }
+
     // Build yt-dlp args for streaming
     const args = ["--no-playlist", "-f"];
-    if (url.includes("facebook.com")) {
+    if (selectedFormat && selectedFormat.acodec !== "none" && selectedFormat.vcodec !== "none") {
+      // Progressive format, no merge/recode needed
+      args.push(quality);
+    } else if (url.includes("facebook.com")) {
       args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+      args.push("--merge-output-format", "mp4");
     } else if (url.includes("instagram.com")) {
       args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
+      args.push("--merge-output-format", "mp4");
     } else if (quality) {
       args.push(quality);
+      args.push("--merge-output-format", "mp4");
     } else {
       args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+      args.push("--merge-output-format", "mp4");
     }
-    args.push("--merge-output-format", "mp4");
-    args.push("--recode-video", "mp4");
     args.push("-o", "-", url); // Output to stdout
 
     res.setHeader("Content-Disposition", contentDisposition(safeFilename));
     res.setHeader("Content-Type", "video/mp4");
 
-    const { spawn } = require("child_process");
-    const ytDlpBin = ytDlpPath;
-    const ytArgs = args;
-    const ytProcess = spawn(ytDlpBin, ytArgs, {
+    const ytProcess = spawn(ytDlpPath, args, {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
