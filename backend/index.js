@@ -200,7 +200,16 @@ app.get("/api/download", async (req, res) => {
     } else if (quality) {
       // Not progressive: merge video+audio
       args.push(quality);
-      args.push("--merge-output-format", "mp4");
+      // Always merge for Instagram and TikTok if not progressive
+      if (
+        url.includes("instagram.com") ||
+        url.includes("tiktok.com") ||
+        url.includes("vt.tiktok.com")
+      ) {
+        args.push("--merge-output-format", "mp4");
+      } else {
+        args.push("--merge-output-format", "mp4");
+      }
     } else {
       // Fallback: best available
       args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
