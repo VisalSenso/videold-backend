@@ -184,26 +184,29 @@ app.get("/api/download", async (req, res) => {
 
     // Build yt-dlp args for streaming
     const args = ["--no-playlist", "-f"];
-    if (url.includes("facebook.com")) {
-      args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
-    } else if (url.includes("instagram.com")) {
-      args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
+    let selectedFormat = null;
+    if (quality && info.formats) {
+      selectedFormat = info.formats.find((f) => f.format_id === quality);
+    }
+    if (
+      selectedFormat &&
+      selectedFormat.acodec !== "none" &&
+      selectedFormat.vcodec !== "none"
+    ) {
+      args.push(quality);
     } else if (quality) {
       args.push(quality);
+      args.push("--merge-output-format", "mp4");
     } else {
-      args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+      args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
+      args.push("--merge-output-format", "mp4");
     }
-    args.push("--merge-output-format", "mp4");
-    args.push("--recode-video", "mp4");
-    args.push("-o", "-", url); // Output to stdout
+    args.push("-o", "-", url);
 
     res.setHeader("Content-Disposition", contentDisposition(safeFilename));
     res.setHeader("Content-Type", "video/mp4");
 
-    const { spawn } = require("child_process");
-    const ytDlpBin = ytDlpPath;
-    const ytArgs = args;
-    const ytProcess = spawn(ytDlpBin, ytArgs, {
+    const ytProcess = spawn(ytDlpPath, args, {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
