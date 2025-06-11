@@ -116,25 +116,32 @@ app.get("/api/downloads", async (req, res) => {
     const buffer = [];
     let bufferedSize = 0;
     const MAX_BUFFER = 512 * 1024; // 512KB for head-start
+    let startedStreaming = false;
+
+    // Send headers immediately so browser shows download bar fast
+    res.setHeader("Content-Disposition", contentDisposition(safeFilename));
+    res.setHeader("Content-Type", "video/mp4");
+    res.setHeader("Transfer-Encoding", "chunked");
+
+    const stream = new PassThrough();
+    stream.pipe(res);
 
     ytProcess.stdout.on("data", (chunk) => {
-      buffer.push(chunk);
-      bufferedSize += chunk.length;
+      if (!startedStreaming) {
+        buffer.push(chunk);
+        bufferedSize += chunk.length;
 
-      if (bufferedSize >= MAX_BUFFER) {
-        // Headers sent here, once valid video starts
-        res.setHeader("Content-Disposition", contentDisposition(safeFilename));
-        res.setHeader("Content-Type", "video/mp4");
-        res.setHeader("Transfer-Encoding", "chunked");
-
-        // Pipe already buffered data
-        const stream = new PassThrough();
-        for (const part of buffer) {
-          stream.write(part);
+        if (bufferedSize >= MAX_BUFFER) {
+          // Flush buffered chunks first
+          for (const part of buffer) {
+            stream.write(part);
+          }
+          // Pipe remaining data directly
+          ytProcess.stdout.pipe(stream);
+          startedStreaming = true;
         }
-        ytProcess.stdout.pipe(stream);
-        stream.pipe(res);
       }
+      // Once streaming started, pipe handles further data automatically
     });
 
     ytProcess.stderr.on("data", (data) => {
@@ -161,7 +168,6 @@ app.get("/api/downloads", async (req, res) => {
     }
   }
 });
-
 
 
 // Proxy thumbnail image fetching
