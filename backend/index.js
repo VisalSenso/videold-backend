@@ -318,8 +318,13 @@ app.get("/api/download", async (req, res) => {
 
     // 2. Try to get a direct video URL and redirect
     const directUrl = await getDirectVideoUrl(url, quality, cookiesFile);
-    if (directUrl) {
-      // Optionally, you can check if the directUrl is a real MP4 file
+
+    // Only redirect for YouTube (and maybe others), NOT TikTok, Facebook, Instagram
+    const isTikTok = url.includes("tiktok.com") || url.includes("vt.tiktok.com");
+    const isFacebook = url.includes("facebook.com") || url.includes("fb.watch");
+    const isInstagram = url.includes("instagram.com");
+
+    if (directUrl && !isTikTok && !isFacebook && !isInstagram) {
       return res.redirect(directUrl);
     }
 
