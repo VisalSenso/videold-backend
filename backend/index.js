@@ -438,6 +438,68 @@ app.post("/api/download-playlist", async (req, res) => {
   archive.finalize();
 });
 
+app.get("/api/download", async (req, res) => {
+  const url = req.query.url;
+  const quality = req.query.quality;
+  if (!isValidVideoUrl(url)) {
+    return res.status(400).json({ error: "Invalid or unsupported video URL." });
+  }
+  try {
+    const cookiesFile = getCookiesFile(url);
+    // Get video info for filename and format details
+    const infoArgs = ["--no-playlist"];
+    if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
+    infoArgs.push(url);
+    const info = await ytDlpWrap.getVideoInfo(infoArgs);
+    const safeFilename = sanitizeFilename(info.title || uuidv4()) + ".mp4";
+
+    // Find selected format
+    let selectedFormat = null;
+    if (quality && info.formats) {
+      selectedFormat = info.formats.find(f => f.format_id === quality);
+    }
+
+    // Build yt-dlp args for streaming
+    const args = ["--no-playlist", "-f"];
+    if (selectedFormat && selectedFormat.acodec !== "none" && selectedFormat.vcodec !== "none") {
+      args.push(quality);
+    } else if (quality) {
+      args.push(quality);
+      args.push("--merge-output-format", "mp4");
+    } else {
+      args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
+      args.push("--merge-output-format", "mp4");
+    }
+    args.push("-o", "-", url);
+
+    res.setHeader("Content-Disposition", contentDisposition(safeFilename));
+    res.setHeader("Content-Type", "video/mp4");
+
+    const ytProcess = spawn(ytDlpPath, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    ytProcess.stdout.pipe(res, { end: true });
+
+    ytProcess.stderr.on("data", (data) => {
+      console.error(`[yt-dlp stderr]`, data.toString());
+    });
+    ytProcess.on("error", (err) => {
+      console.error("yt-dlp error (stream):", err);
+      res.status(500).end("yt-dlp error");
+    });
+    ytProcess.on("close", (code) => {
+      if (code !== 0) {
+        console.error("yt-dlp exited with code", code);
+      }
+    });
+  } catch (err) {
+    console.error("Failed at GET /api/download (stream) with URL:", url);
+    console.error("Error details:", err.stderr || err.message || err);
+    res.status(500).json({ error: "Download failed", details: err.message });
+  }
+});
+
 server.listen(PORT, () => {
   console.log(`✅ Backend running at http://localhost:${PORT}`);
 });
