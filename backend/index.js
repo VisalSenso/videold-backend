@@ -659,27 +659,17 @@ app.get("/api/downloads", async (req, res) => {
     res.setHeader("Content-Disposition", contentDisposition(safeFilename));
     res.setHeader("Content-Type", "video/mp4");
 
-    // Write a minimal MP4 ftyp header to prime the browser's download bar instantly
-    // This is a generic MP4 header (ftyp + moov placeholder)
-    // Most browsers will show the download bar as soon as a few bytes are received
-    const minimalMp4Header = Buffer.from([
-      0x00, 0x00, 0x00, 0x18, // size
-      0x66, 0x74, 0x79, 0x70, // 'ftyp'
-      0x69, 0x73, 0x6F, 0x6D, // 'isom'
-      0x00, 0x00, 0x02, 0x00, // minor version
-      0x69, 0x73, 0x6F, 0x6D, // 'isom'
-      0x69, 0x73, 0x6F, 0x32, // 'iso2'
-      0x61, 0x76, 0x63, 0x31, // 'avc1'
-      0x6D, 0x70, 0x34, 0x31  // 'mp41'
-    ]);
-    res.write(minimalMp4Header);
-
     // Use spawn to ensure stdout is available for piping
-    const { spawn } = require('child_process');
+    const { spawn } = require("child_process");
     const ytDlpBin = ytDlpPath;
     const ytArgs = args;
-    const ytProcess = spawn(ytDlpBin, ytArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const ytProcess = spawn(ytDlpBin, ytArgs, {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    // Pipe yt-dlp's stdout directly to the response
     ytProcess.stdout.pipe(res, { end: true });
+
     ytProcess.stderr.on("data", (data) => {
       console.error(`[yt-dlp stderr]`, data.toString());
     });
