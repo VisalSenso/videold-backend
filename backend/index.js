@@ -91,6 +91,7 @@ app.get("/api/downloads", async (req, res) => {
     const infoArgs = ["--no-playlist"];
     if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
     infoArgs.push(url);
+
     const info = await ytDlpWrap.getVideoInfo(infoArgs);
     const safeFilename = sanitizeFilename(info.title || "video") + ".mp4";
 
@@ -115,10 +116,11 @@ app.get("/api/downloads", async (req, res) => {
 
     const buffer = [];
     let bufferedSize = 0;
-    const MAX_BUFFER = 512 * 1024; // 512KB for head-start
+    const MAX_BUFFER = 512 * 1024;
     let startedStreaming = false;
+    let responseEnded = false;
 
-    // Send headers immediately so browser shows download bar fast
+    // Set headers first
     res.setHeader("Content-Disposition", contentDisposition(safeFilename));
     res.setHeader("Content-Type", "video/mp4");
     res.setHeader("Transfer-Encoding", "chunked");
@@ -132,16 +134,13 @@ app.get("/api/downloads", async (req, res) => {
         bufferedSize += chunk.length;
 
         if (bufferedSize >= MAX_BUFFER) {
-          // Flush buffered chunks first
           for (const part of buffer) {
             stream.write(part);
           }
-          // Pipe remaining data directly
           ytProcess.stdout.pipe(stream);
           startedStreaming = true;
         }
       }
-      // Once streaming started, pipe handles further data automatically
     });
 
     ytProcess.stderr.on("data", (data) => {
@@ -150,12 +149,23 @@ app.get("/api/downloads", async (req, res) => {
 
     ytProcess.on("error", (err) => {
       console.error("yt-dlp error (stream):", err);
-      if (!res.headersSent) res.status(500).end("yt-dlp error");
+      if (!responseEnded) {
+        responseEnded = true;
+        if (!res.headersSent) {
+          res.status(500).end("yt-dlp error");
+        } else {
+          stream.end(); // ends the PassThrough stream
+        }
+      }
     });
 
     ytProcess.on("close", (code) => {
       if (code !== 0) {
         console.error("yt-dlp exited with code", code);
+      }
+      if (!responseEnded) {
+        responseEnded = true;
+        stream.end(); // Finish response
       }
     });
 
