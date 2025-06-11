@@ -83,27 +83,20 @@ app.get("/api/downloads", async (req, res) => {
     return res.status(400).json({ error: "Invalid or unsupported video URL." });
   }
 
-  // Set a placeholder filename early to trigger download bar fast
-  const earlyFilename = sanitizeFilename("video") + ".mp4";
-  res.setHeader("Content-Disposition", contentDisposition(earlyFilename));
+  // Set basic headers early
+  const filename = sanitizeFilename("video") + ".mp4";
+  res.setHeader("Content-Disposition", contentDisposition(filename));
   res.setHeader("Content-Type", "video/mp4");
-  res.setHeader("Transfer-Encoding", "chunked"); // Optional, helps with instant streaming
+  res.setHeader("Transfer-Encoding", "chunked");
+  res.setHeader("Cache-Control", "no-cache");
+
+  // 🟡 Force browser to show the download bar by sending a small dummy byte early
+  res.write(" ");
 
   try {
     const cookiesFile = getCookiesFile(url);
 
-    // Now fetch the real info (after headers sent)
-    const infoArgs = ["--no-playlist"];
-    if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
-    infoArgs.push(url);
-
-    const info = await ytDlpWrap.getVideoInfo(infoArgs);
-    const safeFilename = sanitizeFilename(info.title || "video") + ".mp4";
-
-    // Update Content-Disposition with the correct filename if possible
-    res.setHeader("Content-Disposition", contentDisposition(safeFilename));
-
-    // Build yt-dlp args
+    // Build yt-dlp arguments
     const args = ["--no-playlist", "-f"];
     if (url.includes("facebook.com")) {
       args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
@@ -114,20 +107,18 @@ app.get("/api/downloads", async (req, res) => {
     } else {
       args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
     }
-    args.push("--merge-output-format", "mp4");
-    args.push("--recode-video", "mp4");
-    args.push("-o", "-", url); // Output to stdout
+    args.push("--merge-output-format", "mp4", "--recode-video", "mp4", "-o", "-", url);
+    if (cookiesFile) args.push("--cookies", cookiesFile);
 
-    // Spawn yt-dlp
     const { spawn } = require("child_process");
     const ytProcess = spawn(ytDlpPath, args, {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    ytProcess.stdout.pipe(res, { end: true });
+    ytProcess.stdout.pipe(res);
 
     ytProcess.stderr.on("data", (data) => {
-      console.error(`[yt-dlp stderr]`, data.toString());
+      console.error("[yt-dlp stderr]", data.toString());
     });
 
     ytProcess.on("error", (err) => {
@@ -142,8 +133,7 @@ app.get("/api/downloads", async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Failed at GET /api/downloads (stream) with URL:", url);
-    console.error("Error details:", err.stderr || err.message || err);
+    console.error("Download failed:", err);
     if (!res.headersSent) {
       res.status(500).json({ error: "Download failed", details: err.message });
     } else {
@@ -151,6 +141,7 @@ app.get("/api/downloads", async (req, res) => {
     }
   }
 });
+
 
 
 // Proxy thumbnail image fetching
