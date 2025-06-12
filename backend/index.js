@@ -13,6 +13,7 @@ const os = require("os");
 const { PassThrough } = require("stream");
 const { spawn } = require("child_process");
 const archiver = require("archiver"); // npm install archiver
+const path = require("path");
 
 const isWindows = os.platform() === "win32";
 const ytDlpPath = isWindows
@@ -35,23 +36,24 @@ app.use(express.static(path.join(__dirname, "../video-downloader/dist")));
 
 // Utility to get cookies file based on URL domain
 function getCookiesFile(url) {
-  const domainCookiesMap = {
-    "facebook.com": "facebook.com_cookies.txt",
-    "tiktok.com": "tiktok.com_cookies.txt",
-    "vt.tiktok.com": "tiktok.com_cookies.txt",
-    "youtube.com": "youtube.com_cookies.txt",
-    "youtu.be": "youtube.com_cookies.txt",
-    "twitter.com": "x.com_cookies.txt",
-    "x.com": "x.com_cookies.txt",
-    "instagram.com": "instagram.com_cookies.txt", // <-- add this line
-  };
-  for (const domain in domainCookiesMap) {
-    if (url.includes(domain)) {
-      const file = path.join(__dirname, domainCookiesMap[domain]);
-      return fs.existsSync(file) ? file : null;
-    }
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./, "");
+    const cookieMap = {
+      "instagram.com": path.join(__dirname, "instagram.com_cookies.txt"),
+      "facebook.com": path.join(__dirname, "facebook.com_cookies.txt"),
+      "tiktok.com": path.join(__dirname, "tiktok.com_cookies.txt"),
+      "youtube.com": path.join(__dirname, "youtube.com_cookies.txt"),
+      "youtu.be": path.join(__dirname, "youtube.com_cookies.txt"),
+      "twitter.com": path.join(__dirname, "x.com_cookies.txt"),
+      "x.com": path.join(__dirname, "x.com_cookies.txt"),
+      "vt.tiktok.com": path.join(__dirname, "tiktok.com_cookies.txt"),
+      "fb.watch": path.join(__dirname, "facebook.com_cookies.txt"),
+    };
+    const cookieFile = cookieMap[hostname];
+    return cookieFile && fs.existsSync(cookieFile) ? cookieFile : null;
+  } catch (e) {
+    return null;
   }
-  return null;
 }
 
 // Sanitize filename for safety
