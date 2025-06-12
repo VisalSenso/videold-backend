@@ -13,7 +13,6 @@ const os = require("os");
 const { PassThrough } = require("stream");
 const { spawn } = require("child_process");
 const archiver = require("archiver"); // npm install archiver
-const path = require("path");
 
 const isWindows = os.platform() === "win32";
 const ytDlpPath = isWindows
