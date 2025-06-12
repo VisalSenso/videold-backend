@@ -260,7 +260,8 @@ app.post("/api/download-playlist", async (req, res) => {
 
   for (const video of videos) {
     try {
-      const infoArgs = ["--no-playlist"];
+      const infoArgs = [];
+      if (!isInstagramUrl(video.url)) infoArgs.push("--no-playlist");
       const cookiesFile = getCookiesFile(video.url);
       if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
       infoArgs.push(video.url);
@@ -270,7 +271,9 @@ app.post("/api/download-playlist", async (req, res) => {
       if (video.quality && info.formats) {
         selectedFormat = info.formats.find(f => f.format_id === video.quality);
       }
-      const args = ["--no-playlist", "-f"];
+      const args = [];
+      if (!isInstagramUrl(video.url)) args.push("--no-playlist");
+      args.push("-f");
       if (selectedFormat && selectedFormat.acodec !== "none" && selectedFormat.vcodec !== "none") {
         args.push(video.quality);
       } else if (video.quality) {
