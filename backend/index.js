@@ -35,9 +35,6 @@ app.use(express.static(path.join(__dirname, "../video-downloader/dist")));
 
 // Utility to get cookies file based on URL domain
 function getCookiesFile(url) {
-  if (/instagram\.com/i.test(url)) {
-    return path.join(__dirname, "instagram.com_cookies.txt");
-  }
   const domainCookiesMap = {
     "facebook.com": "facebook.com_cookies.txt",
     "tiktok.com": "tiktok.com_cookies.txt",
@@ -46,6 +43,7 @@ function getCookiesFile(url) {
     "youtu.be": "youtube.com_cookies.txt",
     "twitter.com": "x.com_cookies.txt",
     "x.com": "x.com_cookies.txt",
+    "instagram.com": "instagram.com_cookies.txt", // <-- add this line
   };
   for (const domain in domainCookiesMap) {
     if (url.includes(domain)) {
