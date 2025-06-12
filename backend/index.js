@@ -38,6 +38,7 @@ function getCookiesFile(url) {
   if (/instagram\.com/i.test(url)) {
     const file = path.join(__dirname, "instagram.com_cookies.txt");
     if (fs.existsSync(file)) return file;
+    console.log("Using Instagram cookies:", file); // Add this line
     return null;
   }
   const domainCookiesMap = {
