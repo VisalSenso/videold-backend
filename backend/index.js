@@ -312,12 +312,3 @@ server.listen(PORT, () => {
   console.log(`✅ Backend running at http://localhost:${PORT}`);
 });
 
-// Only include selected videos
-const videosToDownload = videoInfo.videos.filter((v) =>
-  selectedVideos.has(v.id)
-);
-if (videosToDownload.length === 0) {
-  alert("Please select at least one video to download.");
-  setDownloadingZip(false);
-  return;
-}
