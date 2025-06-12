@@ -77,6 +77,11 @@ function isValidVideoUrl(url) {
   );
 }
 
+// Helper: check if Instagram URL
+function isInstagramUrl(url) {
+  return /instagram\.com/i.test(url);
+}
+
 // Proxy thumbnail image fetching
 app.get("/api/proxy-thumbnail", async (req, res) => {
   const { url } = req.query;
@@ -137,7 +142,8 @@ app.post("/api/info", async (req, res) => {
   }
   try {
     const cookiesFile = getCookiesFile(url);
-    const infoArgs = ["--no-playlist"];
+    const infoArgs = [];
+    if (!isInstagramUrl(url)) infoArgs.push("--no-playlist");
     if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
     infoArgs.push(url);
     const info = await ytDlpWrap.getVideoInfo(infoArgs);
@@ -176,7 +182,8 @@ app.get("/api/download", async (req, res) => {
   }
   try {
     const cookiesFile = getCookiesFile(url);
-    const infoArgs = ["--no-playlist"];
+    const infoArgs = [];
+    if (!isInstagramUrl(url)) infoArgs.push("--no-playlist");
     if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
     infoArgs.push(url);
     const info = await ytDlpWrap.getVideoInfo(infoArgs);
@@ -189,7 +196,9 @@ app.get("/api/download", async (req, res) => {
     }
 
     // Build yt-dlp args for streaming
-    const args = ["--no-playlist", "-f"];
+    const args = [];
+    if (!isInstagramUrl(url)) args.push("--no-playlist");
+    args.push("-f");
     if (
       selectedFormat &&
       selectedFormat.acodec !== "none" &&
