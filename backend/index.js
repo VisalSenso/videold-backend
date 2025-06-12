@@ -180,6 +180,7 @@ app.get("/api/download", async (req, res) => {
   }
   try {
     const cookiesFile = getCookiesFile(url);
+    console.log("Using cookies file:", cookiesFile); // <-- Add this line
     const infoArgs = [];
     if (!isInstagramUrl(url)) infoArgs.push("--no-playlist");
     if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
