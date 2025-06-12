@@ -178,12 +178,12 @@ app.get("/api/download", async (req, res) => {
   }
   try {
     const cookiesFile = getCookiesFile(url);
-    console.log(
-      "Using cookies file:",
-      cookiesFile,
-      "Exists:",
-      fs.existsSync(cookiesFile)
-    );
+    if (isInstagramUrl(url) && !cookiesFile) {
+      return res.status(403).json({
+        error:
+          "Instagram videos require login. Missing cookies file on server.",
+      });
+    }
     const infoArgs = [];
     if (!isInstagramUrl(url)) infoArgs.push("--no-playlist");
     if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
