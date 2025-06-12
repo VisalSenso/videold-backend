@@ -1,0 +1,15 @@
+node_modules/
+*.log
+# *.txt
+cookies/
+downloads/
+init-download/
+multi-downloads/
+uploads/
+video-info/
+videos/
+
+backend/node_modules/
+video-downloader/node_modules/
+
+*_cookies.txt
