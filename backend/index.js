@@ -223,20 +223,35 @@ app.get("/api/download", async (req, res) => {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    ytProcess.stdout.pipe(res, { end: true });
+    let errorOccurred = false;
 
+    // Collect stderr for error reporting
+    let stderrData = "";
     ytProcess.stderr.on("data", (data) => {
+      stderrData += data.toString();
       console.error(`[yt-dlp stderr]`, data.toString());
     });
+
     ytProcess.on("error", (err) => {
+      errorOccurred = true;
       console.error("yt-dlp error (stream):", err);
-      res.status(500).end("yt-dlp error");
-    });
-    ytProcess.on("close", (code) => {
-      if (code !== 0) {
-        console.error("yt-dlp exited with code", code);
+      if (!res.headersSent) {
+        res.status(500).end("yt-dlp error");
       }
     });
+
+    ytProcess.on("close", (code) => {
+      if (code !== 0) {
+        errorOccurred = true;
+        console.error("yt-dlp exited with code", code);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "yt-dlp failed", details: stderrData });
+        }
+      }
+    });
+
+    // Only pipe if no error occurred
+    ytProcess.stdout.pipe(res, { end: true });
   } catch (err) {
     console.error("Failed at GET /api/download (stream) with URL:", url);
     console.error("Error details:", err.stderr || err.message || err);
