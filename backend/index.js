@@ -207,14 +207,11 @@ app.get("/api/download", async (req, res) => {
       selectedFormat.acodec !== "none" &&
       selectedFormat.vcodec !== "none"
     ) {
-      // Progressive: direct stream
       args.push(quality);
     } else if (quality) {
-      // Not progressive: merge video+audio
       args.push(quality);
       args.push("--merge-output-format", "mp4");
     } else {
-      // Fallback: best available
       args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
       args.push("--merge-output-format", "mp4");
     }
@@ -227,17 +224,19 @@ app.get("/api/download", async (req, res) => {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    let errorOccurred = false;
-
-    // Collect stderr for error reporting
     let stderrData = "";
+    let stdoutChunks = [];
+
     ytProcess.stderr.on("data", (data) => {
       stderrData += data.toString();
       console.error(`[yt-dlp stderr]`, data.toString());
     });
 
+    ytProcess.stdout.on("data", (chunk) => {
+      stdoutChunks.push(chunk);
+    });
+
     ytProcess.on("error", (err) => {
-      errorOccurred = true;
       console.error("yt-dlp error (stream):", err);
       if (!res.headersSent) {
         res.status(500).end("yt-dlp error");
@@ -246,16 +245,20 @@ app.get("/api/download", async (req, res) => {
 
     ytProcess.on("close", (code) => {
       if (code !== 0) {
-        errorOccurred = true;
         console.error("yt-dlp exited with code", code);
         if (!res.headersSent) {
           res.status(500).json({ error: "yt-dlp failed", details: stderrData });
         }
+      } else {
+        // Only send the file if yt-dlp succeeded
+        const buffer = Buffer.concat(stdoutChunks);
+        if (buffer.length === 0) {
+          res.status(500).json({ error: "Downloaded file is empty." });
+        } else {
+          res.end(buffer);
+        }
       }
     });
-
-    // Only pipe if no error occurred
-    ytProcess.stdout.pipe(res, { end: true });
   } catch (err) {
     console.error("Failed at GET /api/download (stream) with URL:", url);
     console.error("Error details:", err.stderr || err.message || err);
