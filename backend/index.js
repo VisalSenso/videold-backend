@@ -35,24 +35,37 @@ app.use(express.static(path.join(__dirname, "../video-downloader/dist")));
 
 // Utility to get cookies file based on URL domain
 function getCookiesFile(url) {
-  try {
-    const hostname = new URL(url).hostname.replace(/^www\./, "");
-    const cookieMap = {
-      "instagram.com": path.join(__dirname, "instagram.com_cookies.txt"),
-      "facebook.com": path.join(__dirname, "facebook.com_cookies.txt"),
-      "tiktok.com": path.join(__dirname, "tiktok.com_cookies.txt"),
-      "youtube.com": path.join(__dirname, "youtube.com_cookies.txt"),
-      "youtu.be": path.join(__dirname, "youtube.com_cookies.txt"),
-      "twitter.com": path.join(__dirname, "x.com_cookies.txt"),
-      "x.com": path.join(__dirname, "x.com_cookies.txt"),
-      "vt.tiktok.com": path.join(__dirname, "tiktok.com_cookies.txt"),
-      "fb.watch": path.join(__dirname, "facebook.com_cookies.txt"),
-    };
-    const cookieFile = cookieMap[hostname];
-    return cookieFile && fs.existsSync(cookieFile) ? cookieFile : null;
-  } catch (e) {
-    return null;
+  // Always use instagram.com_cookies.txt for any Instagram URL
+  if (/instagram\.com/i.test(url)) {
+    const file = path.join(__dirname, "instagram.com_cookies.txt");
+    console.log("[Instagram] __dirname:", __dirname);
+    console.log("[Instagram] process.cwd():", process.cwd());
+    console.log("[Instagram] Checking for cookies file at:", file);
+    if (fs.existsSync(file)) {
+      console.log("[Instagram] Using cookies file:", file);
+      return file;
+    } else {
+      console.warn("[Instagram] instagram.com_cookies.txt not found at:", file);
+      return null;
+    }
   }
+  // Other platforms as before
+  const domainCookiesMap = {
+    "facebook.com": "facebook.com_cookies.txt",
+    "tiktok.com": "tiktok.com_cookies.txt",
+    "vt.tiktok.com": "tiktok.com_cookies.txt",
+    "youtube.com": "youtube.com_cookies.txt",
+    "youtu.be": "youtube.com_cookies.txt",
+    "twitter.com": "x.com_cookies.txt",
+    "x.com": "x.com_cookies.txt",
+  };
+  for (const domain in domainCookiesMap) {
+    if (url.includes(domain)) {
+      const file = path.join(__dirname, domainCookiesMap[domain]);
+      return fs.existsSync(file) ? file : null;
+    }
+  }
+  return null;
 }
 
 // Sanitize filename for safety
@@ -171,100 +184,216 @@ app.post("/api/info", async (req, res) => {
 });
 
 // GET /api/download - stream video to browser
-app.get("/api/download", async (req, res) => {
-  const url = req.query.url;
-  const quality = req.query.quality;
-  if (!isValidVideoUrl(url)) {
-    return res.status(400).json({ error: "Invalid or unsupported video URL." });
-  }
-  try {
-    const cookiesFile = getCookiesFile(url);
-    if (isInstagramUrl(url) && !cookiesFile) {
-      return res.status(403).json({
-        error:
-          "Instagram videos require login. Missing cookies file on server.",
-      });
-    }
-    const infoArgs = [];
-    if (!isInstagramUrl(url)) infoArgs.push("--no-playlist");
-    if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
-    infoArgs.push(url);
-    const info = await ytDlpWrap.getVideoInfo(infoArgs);
-    const safeFilename = sanitizeFilename(info.title || uuidv4()) + ".mp4";
-
-    // Find selected format
-    let selectedFormat = null;
-    if (quality && info.formats) {
-      selectedFormat = info.formats.find((f) => f.format_id === quality);
+app.post(
+  "/api/download",
+  [
+    body("url")
+      .custom(isValidVideoUrl)
+      .withMessage("Invalid or unsupported video URL."),
+    body("quality").optional().isString().isLength({ max: 50 }), // Allow longer format_id
+    body("downloadId").optional().isString().isLength({ max: 64 }),
+  ],
+  async (req, res) => {
+    // Log request body for debugging
+    console.log("/api/downloads request body:", req.body);
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      // Log validation errors for debugging
+      console.error("/api/downloads validation errors:", errors.array());
+      return res.status(400).json({ error: errors.array()[0].msg });
     }
 
-    // Build yt-dlp args for streaming
-    const args = [];
-    if (!isInstagramUrl(url)) args.push("--no-playlist");
-    args.push("-f");
-    if (
-      selectedFormat &&
-      selectedFormat.acodec !== "none" &&
-      selectedFormat.vcodec !== "none"
-    ) {
-      args.push(quality);
-    } else if (quality) {
-      args.push(quality);
-      args.push("--merge-output-format", "mp4");
-    } else {
-      args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
-      args.push("--merge-output-format", "mp4");
-    }
-    args.push("-o", "-", url); // Output to stdout
+    const { url, quality, downloadId } = req.body;
 
-    res.setHeader("Content-Disposition", contentDisposition(safeFilename));
-    res.setHeader("Content-Type", "video/mp4");
+    try {
+      const cookiesFile = getCookiesFile(url);
 
-    const ytProcess = spawn(ytDlpPath, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+      // REMOVED cookies check to allow fetching without cookies for public videos
 
-    let stderrData = "";
-    let stdoutChunks = [];
+      // If quality not specified, return metadata (playlist or single)
+      if (!quality) {
+        const args = cookiesFile
+          ? [
+              "--cookies",
+              cookiesFile,
+              "--dump-single-json",
+              "--flat-playlist",
+              url,
+            ]
+          : ["--dump-single-json", "--flat-playlist", url];
 
-    ytProcess.stderr.on("data", (data) => {
-      stderrData += data.toString();
-      console.error(`[yt-dlp stderr]`, data.toString());
-    });
+        const infoJson = await ytDlpWrap.execPromise(args);
+        const info = JSON.parse(infoJson);
 
-    ytProcess.stdout.on("data", (chunk) => {
-      stdoutChunks.push(chunk);
-    });
+        if (Array.isArray(info.entries)) {
+          // Playlist detected: fetch full info per video
+          const videos = await Promise.all(
+            info.entries.map(async (v) => {
+              // Use url from entry or build youtube url fallback
+              const videoUrl =
+                v.url || `https://www.youtube.com/watch?v=${v.id}`;
 
-    ytProcess.on("error", (err) => {
-      console.error("yt-dlp error (stream):", err);
-      if (!res.headersSent) {
-        res.status(500).end("yt-dlp error");
-      }
-    });
+              const fullInfoArgs = cookiesFile
+                ? ["--cookies", cookiesFile, "--dump-single-json", videoUrl]
+                : ["--dump-single-json", videoUrl];
 
-    ytProcess.on("close", (code) => {
-      if (code !== 0) {
-        console.error("yt-dlp exited with code", code);
-        if (!res.headersSent) {
-          res.status(500).json({ error: "yt-dlp failed", details: stderrData });
-        }
-      } else {
-        // Only send the file if yt-dlp succeeded
-        const buffer = Buffer.concat(stdoutChunks);
-        if (buffer.length === 0) {
-          res.status(500).json({ error: "Downloaded file is empty." });
+              const fullInfoJson = await ytDlpWrap.execPromise(fullInfoArgs);
+              const fullInfo = JSON.parse(fullInfoJson);
+
+              // --- Thumbnail robust extraction ---
+              let thumbnail = fullInfo.thumbnail || null;
+              // Fallback: use first HTTPS thumbnail from thumbnails array
+              if (
+                (!thumbnail || !/^https:/.test(thumbnail)) &&
+                Array.isArray(fullInfo.thumbnails)
+              ) {
+                const httpsThumb = fullInfo.thumbnails.find(
+                  (t) => t.url && t.url.startsWith("https:")
+                );
+                if (httpsThumb) thumbnail = httpsThumb.url;
+              }
+
+              return {
+                id: fullInfo.id,
+                title: fullInfo.title || `Video ${fullInfo.id}`,
+                url: fullInfo.webpage_url || videoUrl,
+                thumbnail,
+                formats: fullInfo.formats || [],
+              };
+            })
+          );
+
+          return res.json({
+            isPlaylist: true,
+            playlistTitle: info.title || "Untitled Playlist",
+            videos,
+          });
         } else {
-          res.end(buffer);
+          // Single video metadata
+          // --- Thumbnail robust extraction for single video ---
+          let singleInfo = info;
+          let thumbnail = singleInfo.thumbnail || null;
+          if (
+            (!thumbnail || !/^https:/.test(thumbnail)) &&
+            Array.isArray(singleInfo.thumbnails)
+          ) {
+            const httpsThumb = singleInfo.thumbnails.find(
+              (t) => t.url && t.url.startsWith("https:")
+            );
+            if (httpsThumb) thumbnail = httpsThumb.url;
+          }
+          singleInfo.thumbnail = thumbnail;
+          return res.json(singleInfo);
         }
       }
-    });
-  } catch (err) {
-    console.error("Failed at GET /api/download (stream) with URL:", url);
-    console.error("Error details:", err.stderr || err.message || err);
-    res.status(500).json({ error: "Download failed", details: err.message });
+
+      // Download with progress emitting
+      const { filePath, filename, cleanup } = await downloadWithProgress({
+        url,
+        quality,
+        downloadId,
+        io,
+      });
+
+      const stat = fs.statSync(filePath);
+
+      res.writeHead(200, {
+        "Content-Type": "video/mp4",
+        "Content-Length": stat.size,
+        "Content-Disposition": contentDisposition(filename),
+      });
+
+      const stream = fs.createReadStream(filePath);
+      let bytesSent = 0;
+      let lastEmit = Date.now();
+      let lastBytes = 0;
+      const totalSize = stat.size;
+
+      stream.on("data", (chunk) => {
+        bytesSent += chunk.length;
+        const percent = (bytesSent / totalSize) * 100;
+        if (downloadId) {
+          io.to(downloadId).emit("progress", {
+            percent,
+          });
+        }
+      });
+      // Emit final progress with last speed and percent=100 when stream ends
+      stream.on("end", () => {
+        if (downloadId) {
+          io.to(downloadId).emit("progress", {
+            percent: 100,
+          });
+        }
+      });
+      stream.pipe(res);
+
+      stream.on("close", cleanup);
+      stream.on("error", (err) => {
+        console.error("Stream error:", err);
+        cleanup();
+        res.status(500).send("Failed to stream file");
+      });
+    } catch (err) {
+      console.error("Failed at /api/downloads with URL:", req.body.url);
+      console.error("Error details:", err.stderr || err.message || err);
+      // Platform-specific error handling
+      const errMsg = (err && (err.stderr || err.message || "")).toString();
+      // Instagram
+      if (
+        /instagram/i.test(errMsg) &&
+        /login required|rate-limit reached|not available|use --cookies|Main webpage is locked behind the login page|unable to extract shared data/i.test(
+          errMsg
+        )
+      ) {
+        // Log the full yt-dlp error for debugging
+        console.error("[Instagram 403] yt-dlp error details:", errMsg);
+        return res.status(403).json({
+          error:
+            "Instagram requires login/cookies to download this video. Please log in and provide cookies, or try a different public video.",
+          details: errMsg,
+        });
+      }
+      // Facebook
+      if (
+        /facebook/i.test(errMsg) &&
+        /login required|not available|cookies/i.test(errMsg)
+      ) {
+        return res.status(403).json({
+          error:
+            "Facebook requires login/cookies to download this video. Please log in and provide cookies, or try a different public video.",
+          details: errMsg,
+        });
+      }
+      // TikTok
+      if (
+        /tiktok/i.test(errMsg) &&
+        /login required|not available|cookies|forbidden|403/i.test(errMsg)
+      ) {
+        return res.status(403).json({
+          error:
+            "TikTok requires login/cookies to download this video. Please log in and provide cookies, or try a different public video.",
+          details: errMsg,
+        });
+      }
+      // YouTube
+      if (
+        /youtube|youtu\.be/i.test(errMsg) &&
+        (/login required|not available|cookies|This video is private|sign in|429|Too Many Requests|quota exceeded|rate limit/i.test(
+          errMsg
+        ) ||
+          /HTTP Error 429|Too Many Requests|quota/i.test(errMsg))
+      ) {
+        return res.status(429).json({
+          error:
+            "YouTube is temporarily blocking downloads from this server due to too many requests (HTTP 429 / rate limit). Please try again later, or use a different server or your local machine.",
+          details: errMsg,
+        });
+      }
+      res.status(500).json({ error: "Download failed", details: err.message });
+    }
   }
-});
+);
 
 // POST /api/download-playlist - download multiple videos as zip
 app.post("/api/download-playlist", async (req, res) => {
