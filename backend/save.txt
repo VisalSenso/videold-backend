@@ -1,0 +1,1876 @@
+home.jsx
+import { useState, useRef, useEffect } from "react";
+import axios from "axios";
+import { io } from "socket.io-client";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faDownload, faPlay } from "@fortawesome/free-solid-svg-icons";
+
+function Home() {
+  const [url, setUrl] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [videoInfo, setVideoInfo] = useState(null);
+  const [isPlaylist, setIsPlaylist] = useState(false);
+  const [selectedFormat, setSelectedFormat] = useState(null);
+  const [selectedFormats, setSelectedFormats] = useState({}); // For playlist videos
+  const [selectedVideos, setSelectedVideos] = useState(new Set()); // Track selected videos for batch download
+  const [downloadProgress, setDownloadProgress] = useState(0); // <== HERE
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadStatus, setDownloadStatus] = useState({});
+  const [downloadSpeed, setDownloadSpeed] = useState(0); // in MB/s
+  const [eta, setEta] = useState(0); // in seconds
+  const lastProgressUpdateRef = useRef({});
+  const lastLoadedRef = useRef({});
+  const [downloadId, setDownloadId] = useState(null);
+  const [formatFilter, setFormatFilter] = useState("all"); // 1. Add format filter tabs state
+
+  const socketRef = useRef();
+
+  useEffect(() => {
+    // Initialize socket only once
+    socketRef.current = io("http://localhost:4000");
+
+    // When connected, emit join with downloadId if available
+    socketRef.current.on("connect", () => {
+      if (downloadId) {
+        socketRef.current.emit("join", downloadId);
+      }
+    });
+
+    socketRef.current.on("progress", ({ percent, speed, eta, isZip }) => {
+      if (isZip) {
+        setDownloadProgress(percent);
+        setDownloadSpeed(speed || 0);
+        setEta(eta || 0);
+      } else {
+        setDownloadProgress(percent);
+        setDownloadSpeed(speed);
+        setEta(eta);
+      }
+    });
+
+    return () => {
+      socketRef.current.disconnect();
+    };
+  }, [downloadId]); // Will re-run whenever downloadId changes
+
+  const handleFetchInfo = async () => {
+    if (!url) return alert("Please enter a URL");
+    setLoading(true);
+    setVideoInfo(null);
+    setIsPlaylist(false);
+    setSelectedFormat(null);
+    setSelectedFormats({});
+    setSelectedVideos(new Set());
+
+    try {
+      const res = await axios.post("http://localhost:4000/api/downloads", {
+        url,
+      });
+
+      if (res.data.isPlaylist) {
+        setIsPlaylist(true);
+        setVideoInfo({
+          title: res.data.playlistTitle,
+          videos: res.data.videos || [],
+        });
+
+        // 🟨 Add this log here to inspect playlist structure
+        console.log("Playlist videoInfo:", {
+          title: res.data.playlistTitle,
+          videos: res.data.videos || [],
+        });
+
+        // Initialize selected formats for each video to first available format
+        const initialFormats = {};
+        res.data.videos?.forEach((v) => {
+          if (v.formats?.length > 0)
+            initialFormats[v.id] = v.formats[0].format_id;
+        });
+        setSelectedFormats(initialFormats);
+      } else {
+        setVideoInfo(res.data);
+        // 🟨 Log for single video
+        console.log("Single videoInfo:", res.data);
+
+        if (res.data.formats?.length > 0) {
+          setSelectedFormat(res.data.formats[0].format_id);
+        }
+      }
+    } catch {
+      alert("Failed to fetch video or playlist info.");
+    }
+
+    setLoading(false);
+  };
+
+  const THROTTLE_INTERVAL = 500; // ms
+
+  const handleDownload = async () => {
+    if (!url || !selectedFormat) {
+      alert("Please fetch a video and select a format.");
+      return;
+    }
+
+    setIsDownloading(true);
+    setDownloadProgress(0);
+    setDownloadSpeed(0);
+    setEta(0);
+
+    try {
+      // Only fetch downloadId and filename if not already present
+      let downloadIdToUse = downloadId;
+      let filename = videoInfo?.title || "video";
+      if (!downloadId) {
+        const initRes = await axios.post(
+          "http://localhost:4000/api/init-download",
+          {
+            url,
+            quality: selectedFormat,
+          }
+        );
+        downloadIdToUse = initRes.data.downloadId;
+        filename = initRes.data.filename;
+        setDownloadId(downloadIdToUse);
+        // Join socket room
+        socketRef.current.emit("join", downloadIdToUse);
+      }
+
+      // Now trigger actual download (only once)
+      const res = await axios.post(
+        "http://localhost:4000/api/downloads",
+        { url, quality: selectedFormat, downloadId: downloadIdToUse },
+        { responseType: "blob" }
+      );
+
+      // Try to get extension from response headers
+      let contentDisposition = res.headers["content-disposition"];
+      let ext = ".mp4";
+      if (contentDisposition) {
+        const match = contentDisposition.match(/filename="?.*\.(\w+)"?/);
+        if (match && match[1]) {
+          ext = "." + match[1];
+        }
+      }
+      const blob = new Blob([res.data]);
+      triggerDownload(blob, `${filename}${ext}`);
+    } catch (err) {
+      alert("Download failed");
+      console.error(err);
+    }
+
+    setIsDownloading(false);
+    setEta(0);
+    setDownloadSpeed(0);
+    setDownloadProgress(0);
+  };
+
+  function triggerDownload(blob, filename) {
+    const blobUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = blobUrl;
+    link.setAttribute("download", filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
+  const toggleVideoSelection = (videoId) => {
+    setSelectedVideos((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(videoId)) {
+        newSet.delete(videoId);
+      } else {
+        newSet.add(videoId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleMultiDownload = async () => {
+    if (selectedVideos.size === 0) {
+      alert("Please select videos to download.");
+      return;
+    }
+
+    const videosToDownload = Array.from(selectedVideos)
+      .map((videoId) => {
+        const video = videoInfo.videos.find((v) => v.id === videoId);
+        if (!video) return null;
+        const quality =
+          selectedFormats[videoId] || video.formats?.[0]?.format_id;
+        if (!quality) return null;
+        return { url: video.url, quality, title: video.title };
+      })
+      .filter(Boolean);
+
+    if (videosToDownload.length === 0) {
+      alert("No valid videos to download.");
+      return;
+    }
+
+    setIsDownloading(true);
+    setDownloadProgress(0);
+
+    try {
+      const res = await axios.post(
+        "http://localhost:4000/api/multi-downloads",
+        { videos: videosToDownload },
+        {
+          responseType: "blob",
+          onDownloadProgress: (progressEvent) => {
+            if (progressEvent.lengthComputable) {
+              const percent =
+                (progressEvent.loaded / progressEvent.total) * 100;
+              setDownloadProgress(percent);
+
+              const now = Date.now();
+              const elapsed =
+                (now - (lastProgressUpdateRef.current.zip || now)) / 1000;
+
+              const deltaLoaded =
+                progressEvent.loaded - (lastLoadedRef.current.zip || 0);
+
+              const speedBytesPerSec = deltaLoaded / (elapsed || 1);
+              const estimatedTimeSec = speedBytesPerSec
+                ? (progressEvent.total - progressEvent.loaded) /
+                  speedBytesPerSec
+                : 0;
+
+              setDownloadSpeed((speedBytesPerSec / 1024 / 1024).toFixed(2));
+              setEta(Math.ceil(estimatedTimeSec));
+
+              lastLoadedRef.current.zip = progressEvent.loaded;
+              lastProgressUpdateRef.current.zip = now;
+            }
+          },
+        }
+      );
+
+      const blobUrl = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.setAttribute("download", "videos.zip");
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (err) {
+      alert("Failed to download selected videos as ZIP.");
+      console.error(err);
+    }
+
+    setIsDownloading(false);
+  };
+
+  // Helper to check if a URL is a Facebook link
+  const isFacebookUrl = (url) => url && url.includes("facebook.com");
+
+  // 2. Helper to filter formats
+  const filterFormats = (formats) => {
+    if (formatFilter === "all") return formats;
+    return formats.filter((f) => f.ext && f.ext.toLowerCase() === formatFilter);
+  };
+
+  return (
+    <div className="min-h-screen bg-[#ffffff] text-text-color p-6 flex items-center justify-center">
+      <div className="w-full max-w-3xl  p-8 space-y-6">
+        <h1 className="text-3xl font-bold text-center text-text-color">
+          Video <span className="text-primary ">Downloader</span>
+        </h1>
+        <p className="text-center text-sm text-gray-400">
+          Enter a video or playlist URL to fetch available formats and download
+          options. Supports YouTube, Facebook, Instagram Tik Tok and X
+          (Twitter).
+        </p>
+
+        <div className="flex flex-col gap-4">
+          <input
+            type="text"
+            placeholder="Paste video or playlist URL"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            className="flex-1 border-2 border-[#eae9e9] px-4 py-3 rounded-lg text-text-color active:border-prbg-primary focus:border-prbg-primary focus:outline-none transition-colors duration-200"
+          />
+          <button
+            onClick={handleFetchInfo}
+            className="bg-primary cursor-pointer text-[#ffffff] px-6 py-3 rounded-lg"
+          >
+            {loading ? "Loading..." : "Fetch"}
+          </button>
+        </div>
+
+        {isPlaylist && videoInfo?.videos?.length > 0 && (
+          <div className="space-y-4">
+            <h2 className="text-lg font-semibold text-center">
+              {videoInfo.title}
+            </h2>
+            {isFacebookUrl(url) && (
+              <div className="text-yellow-400 text-center text-sm font-semibold">
+                For Facebook videos, only the best quality will be downloaded
+                for compatibility. Quality selection is disabled.
+              </div>
+            )}
+            <p className="text-sm text-center text-gray-400">
+              Select videos to download
+            </p>
+
+            {/* Format filter tabs for playlist videos */}
+            {isPlaylist && videoInfo?.videos?.length > 0 && (
+              <div className="flex gap-2 mt-2 mb-2 justify-center">
+                {["all", "mp4", "mkv", "webm", "mp3", "m4a"].map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setFormatFilter(type)}
+                    className={`px-3 py-1 rounded-full border text-xs font-semibold transition-colors duration-150 ${
+                      formatFilter === type
+                        ? "bg-primary text-white border-primary shadow"
+                        : "bg-white text-primary border-gray-200 hover:bg-blue-50"
+                    }`}
+                  >
+                    {type.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <ul className="space-y-4 max-h-[600px] overflow-y-auto">
+              {videoInfo.videos.map((video) => (
+                <li
+                  key={video.id}
+                  className="flex flex-col sm:flex-row  rounded-xl p-4 gap-4 items-center"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedVideos.has(video.id)}
+                    onChange={() => toggleVideoSelection(video.id)}
+                    className="w-5 h-5"
+                  />
+
+                  {/* Video preview with play icon overlay for playlist videos */}
+                  {video.thumbnail ? (
+                    <div className="relative w-48 h-28 rounded-md overflow-hidden group">
+                      <img
+                        src={video.thumbnail}
+                        alt={video.title}
+                        className="w-48 h-28 object-cover"
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition">
+                        <FontAwesomeIcon
+                          icon={faPlay}
+                          className="text-primary drop-shadow-lg text-3xl bg-white/70 rounded-full p-2"
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="w-48 h-28 bg-gray-700 flex items-center justify-center text-sm text-gray-400 rounded-md">
+                      No thumbnail
+                    </div>
+                  )}
+
+                  <div className="flex-1 space-y-2">
+                    <h3 className="text-lg font-semibold">{video.title}</h3>
+
+                    {/* Format filter tabs for single video */}
+                    {videoInfo && !isPlaylist && videoInfo.formats && (
+                      <div className="flex gap-2 mt-4 mb-2">
+                        {["all", "mp4", "mkv", "webm", "mp3", "m4a"].map(
+                          (type) => (
+                            <button
+                              key={type}
+                              onClick={() => setFormatFilter(type)}
+                              className={`px-3 py-1 rounded-full border text-xs font-semibold transition-colors duration-150 ${
+                                formatFilter === type
+                                  ? "bg-primary text-white border-primary shadow"
+                                  : "bg-white text-primary border-gray-200 hover:bg-blue-50"
+                              }`}
+                            >
+                              {type.toUpperCase()}
+                            </button>
+                          )
+                        )}
+                      </div>
+                    )}
+
+                    <select
+                      className="w-full border border-[#eae9e9] px-4 py-2 rounded-md text-text-color focus:ring-2 focus:ring-primary focus:border-primary transition"
+                      value={selectedFormats[video.id] || ""}
+                      onChange={(e) =>
+                        setSelectedFormats((prev) => ({
+                          ...prev,
+                          [video.id]: e.target.value,
+                        }))
+                      }
+                      disabled={
+                        isFacebookUrl(video.url) ||
+                        !video.formats ||
+                        video.formats.length === 0
+                      }
+                    >
+                      {filterFormats(video.formats)?.length > 0 ? (
+                        filterFormats(video.formats).map((format) => (
+                          <option
+                            key={format.format_id}
+                            value={format.format_id}
+                          >
+                            {format.format_note || "Unknown"} • {format.ext} •{" "}
+                            {format.filesize
+                              ? (format.filesize / (1024 * 1024)).toFixed(1) +
+                                " MB"
+                              : "N/A"}
+                          </option>
+                        ))
+                      ) : (
+                        <option>No formats available</option>
+                      )}
+                    </select>
+
+                    {/* Buttons */}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={async () => {
+                          const formatId =
+                            selectedFormats[video.id] ||
+                            video.formats?.[0]?.format_id;
+
+                          if (!formatId) {
+                            alert("Please select a format first.");
+                            return;
+                          }
+
+                          // Set initial download state
+                          setDownloadStatus((prev) => ({
+                            ...prev,
+                            [video.id]: {
+                              ...prev[video.id],
+                              progress: 0,
+                              speed: 0,
+                              eta: 0,
+                              isDownloading: true,
+                            },
+                          }));
+
+                          lastLoadedRef.current[video.id] = 0;
+                          lastProgressUpdateRef.current[video.id] = Date.now();
+
+                          try {
+                            const res = await axios.post(
+                              "http://localhost:4000/api/downloads",
+                              { url: video.url, quality: formatId },
+                              {
+                                responseType: "blob",
+                                onDownloadProgress: (progressEvent) => {
+                                  const total =
+                                    progressEvent.total ?? progressEvent.loaded;
+                                  const loaded = progressEvent.loaded;
+                                  const percent = (loaded / total) * 100;
+
+                                  const now = Date.now();
+                                  const elapsed =
+                                    (now -
+                                      (lastProgressUpdateRef.current[
+                                        video.id
+                                      ] || now)) /
+                                    1000;
+
+                                  const deltaLoaded =
+                                    loaded -
+                                    (lastLoadedRef.current[video.id] || 0);
+
+                                  const speedBytesPerSec =
+                                    deltaLoaded / (elapsed || 1);
+                                  const estimatedTimeSec = speedBytesPerSec
+                                    ? (total - loaded) / speedBytesPerSec
+                                    : 0;
+
+                                  setDownloadStatus((prev) => ({
+                                    ...prev,
+                                    [video.id]: {
+                                      progress: percent,
+                                      speed: (
+                                        speedBytesPerSec /
+                                        1024 /
+                                        1024
+                                      ).toFixed(2),
+                                      eta: Math.ceil(estimatedTimeSec),
+                                      isDownloading: true,
+                                    },
+                                  }));
+
+                                  lastLoadedRef.current[video.id] = loaded;
+                                  lastProgressUpdateRef.current[video.id] = now;
+                                },
+                              }
+                            );
+
+                            const blobUrl = window.URL.createObjectURL(
+                              new Blob([res.data])
+                            );
+                            const link = document.createElement("a");
+                            link.href = blobUrl;
+                            link.setAttribute("download", `${video.title}.mp4`);
+                            document.body.appendChild(link);
+                            link.click();
+                            link.remove();
+                            window.URL.revokeObjectURL(blobUrl);
+                          } catch (err) {
+                            console.error(err);
+                            alert("Failed to download video.");
+                          }
+
+                          // Mark download as complete
+                          setDownloadStatus((prev) => ({
+                            ...prev,
+                            [video.id]: {
+                              ...prev[video.id],
+                              isDownloading: false,
+                              progress: 100,
+                              speed: 0,
+                              eta: 0,
+                            },
+                          }));
+                        }}
+                        className="bg-primary cursor-pointer text-text-btn px-4 py-2 rounded-md flex items-center gap-2 shadow hover:bg-blue-700 focus:ring-2 focus:ring-blue-400 transition"
+                      >
+                        <FontAwesomeIcon icon={faDownload} className="w-5 h-5" />
+                        Download
+                      </button>
+
+                      {downloadStatus[video.id] && (
+                        <div className="w-full space-y-2 mt-4">
+                          <div className="relative w-full h-5 bg-gray-200 rounded-full overflow-hidden shadow-md">
+                            <div
+                              className={`absolute left-0 top-0 h-full transition-all duration-300 ease-out animate-gradient-x`}
+                              style={{
+                                width: `${
+                                  downloadStatus[video.id].progress || 0
+                                }%`,
+                                background:
+                                  "linear-gradient(90deg, #3b82f6 0%, #60a5fa 50%, #2563eb 100%)",
+                                borderRadius: "9999px",
+                              }}
+                            >
+                              {/* Animated dot at the end */}
+                              <div
+                                className="absolute right-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white border-2 border-blue-400 rounded-full shadow-lg animate-bounce"
+                                style={{
+                                  display:
+                                    (downloadStatus[video.id].progress || 0) > 2
+                                      ? "block"
+                                      : "none",
+                                  boxShadow: "0 0 8px 2px #60a5fa55",
+                                }}
+                              ></div>
+                            </div>
+                            {/* Overlayed percentage */}
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <span className="font-bold text-blue-900 text-sm drop-shadow-sm">
+                                {(
+                                  downloadStatus[video.id].progress || 0
+                                ).toFixed(0)}
+                                %
+                              </span>
+                            </div>
+                          </div>
+                          {(downloadStatus[video.id].speed ||
+                            downloadStatus[video.id].eta) && (
+                            <div className="text-xs text-gray-500 flex gap-4 justify-between px-1">
+                              <span>
+                                Speed: {downloadStatus[video.id].speed} MB/s
+                              </span>
+                              <span>ETA: {downloadStatus[video.id].eta}s</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <button
+              disabled={selectedVideos.size === 0}
+              onClick={handleMultiDownload}
+              className={`mt-4 w-full py-3 rounded-lg font-semibold flex items-center justify-center gap-2 shadow ${
+                selectedVideos.size === 0
+                  ? "bg-[#eae9e9] cursor-not-allowed"
+                  : "bg-primary text-text-btn hover:bg-blue-700 focus:ring-2 focus:ring-blue-400 transition"
+              }`}
+            >
+              <FontAwesomeIcon icon={faDownload} className="w-5 h-5" />
+              Download Selected Videos as ZIP
+            </button>
+            {isDownloading && (
+              <div className="space-y-2 mt-4">
+                <div className="relative w-full h-5 bg-gray-200 rounded-full overflow-hidden shadow-md">
+                  <div
+                    className="absolute left-0 top-0 h-full transition-all duration-300 ease-out animate-gradient-x"
+                    style={{
+                      width: `${downloadProgress.toFixed(0)}%`,
+                      background:
+                        "linear-gradient(90deg, #3b82f6 0%, #60a5fa 50%, #2563eb 100%)",
+                      borderRadius: "9999px",
+                    }}
+                  >
+                    {/* Animated dot at the end */}
+                    <div
+                      className="absolute right-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white border-2 border-blue-400 rounded-full shadow-lg animate-bounce"
+                      style={{
+                        display: downloadProgress > 2 ? "block" : "none",
+                        boxShadow: "0 0 8px 2px #60a5fa55",
+                      }}
+                    ></div>
+                  </div>
+                  {/* Overlayed percentage */}
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className="font-bold text-blue-900 text-sm drop-shadow-sm">
+                      {downloadProgress.toFixed(0)}%
+                    </span>
+                  </div>
+                </div>
+                <div className="flex justify-between text-sm text-gray-500 px-1">
+                  <span>Speed: {downloadSpeed} MB/s</span>
+                  <span>ETA: {eta}s</span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {videoInfo && !isPlaylist && (
+          <div className=" p-5 rounded-xl space-y-4">
+            <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6">
+              {videoInfo.thumbnail && (
+                <div className="relative w-64 rounded-xl shadow-md overflow-hidden group">
+                  <img
+                    src={videoInfo.thumbnail}
+                    alt="Thumbnail"
+                    className="w-64 rounded-xl"
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition">
+                    <FontAwesomeIcon
+                      icon={faPlay}
+                      className="text-primary drop-shadow-lg text-4xl bg-white/70 rounded-full p-3"
+                    />
+                  </div>
+                </div>
+              )}
+              <div className="flex-1">
+                <h2 className="text-xl font-semibold">{videoInfo.title}</h2>
+                {isFacebookUrl(url) && (
+                  <div className="text-yellow-400 text-sm font-semibold mb-2">
+                    For Facebook videos, only the best quality will be
+                    downloaded for compatibility. Quality selection is disabled.
+                  </div>
+                )}
+
+                {/* Format filter tabs for single video */}
+                {videoInfo && !isPlaylist && videoInfo.formats && (
+                  <div className="flex gap-2 mt-4 mb-2">
+                    {["all", "mp4", "mkv", "webm", "mp3", "m4a"].map((type) => (
+                      <button
+                        key={type}
+                        onClick={() => setFormatFilter(type)}
+                        className={`px-3 py-1 rounded-full border text-xs font-semibold transition-colors duration-150 ${
+                          formatFilter === type
+                            ? "bg-primary text-white border-primary shadow"
+                            : "bg-white text-primary border-gray-200 hover:bg-blue-50"
+                        }`}
+                      >
+                        {type.toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <select
+                  className="mt-3 w-full border border-[#eae9e9] px-4 py-2 rounded-md text-text-color focus:ring-2 focus:ring-primary focus:border-primary transition"
+                  value={selectedFormat || ""}
+                  onChange={(e) => setSelectedFormat(e.target.value)}
+                  disabled={isFacebookUrl(url)}
+                >
+                  {filterFormats(videoInfo.formats)?.map((format) => (
+                    <option key={format.format_id} value={format.format_id}>
+                      {format.resolution || format.format_note || "Unknown"} •{" "}
+                      {format.ext} •{" "}
+                      {format.filesize
+                        ? (format.filesize / (1024 * 1024)).toFixed(1) + " MB"
+                        : "N/A"}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleDownload}
+                  className="mt-4 w-full bg-primary cursor-pointer text-text-btn py-3 rounded-lg font-semibold"
+                >
+                  ⬇️ Download
+                </button>
+                {isDownloading && (
+                  <div className="space-y-2 mt-4">
+                    <div className="relative w-full h-5 bg-gray-200 rounded-full overflow-hidden shadow-md">
+                      <div
+                        className="absolute left-0 top-0 h-full transition-all duration-300 ease-out animate-gradient-x"
+                        style={{
+                          width: `${downloadProgress}%`,
+                          background:
+                            "linear-gradient(90deg, #3b82f6 0%, #60a5fa 50%, #2563eb 100%)",
+                          borderRadius: "9999px",
+                        }}
+                      >
+                        {/* Animated dot at the end */}
+                        <div
+                          className="absolute right-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white border-2 border-blue-400 rounded-full shadow-lg animate-bounce"
+                          style={{
+                            display: downloadProgress > 2 ? "block" : "none",
+                            boxShadow: "0 0 8px 2px #60a5fa55",
+                          }}
+                        ></div>
+                      </div>
+                      {/* Overlayed percentage */}
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <span className="font-bold text-blue-900 text-sm drop-shadow-sm">
+                          {downloadProgress.toFixed(0)}%
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex justify-between text-sm text-gray-500 px-1">
+                      <span>Speed: {downloadSpeed} MB/s</span>
+                      <span>ETA: {eta}s</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default Home;
+
+
+//index.js
+const express = require("express");
+const cors = require("cors");
+const bodyParser = require("body-parser");
+const fs = require("fs");
+const path = require("path");
+const tmp = require("tmp");
+const { v4: uuidv4 } = require("uuid");
+const YtDlpWrap = require("yt-dlp-wrap").default;
+const contentDisposition = require("content-disposition");
+const http = require("http");
+const { Server } = require("socket.io");
+const archiver = require("archiver");
+const rateLimit = require("express-rate-limit");
+const { body, validationResult } = require("express-validator");
+const os = require("os");
+// Use node-fetch import compatible with most Node.js environments
+let fetch;
+try {
+  fetch = require("node-fetch").default;
+} catch (e) {
+  fetch = (...args) =>
+    import("node-fetch").then(({ default: fetch }) => fetch(...args));
+}
+
+const isWindows = os.platform() === "win32";
+
+const ytDlpPath = isWindows
+  ? path.resolve(__dirname, "bin", "yt-dlp.exe")
+  : path.resolve(__dirname, "bin", "yt-dlp");
+
+const ytDlpWrap = new YtDlpWrap(ytDlpPath);
+
+const app = express();
+// Keep only if you're behind a proxy like Render or NGINX
+app.set("trust proxy", 1);
+
+const PORT = process.env.PORT || 3000;
+
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: [
+      "https://videodl.netlify.app",
+      "http://localhost:5173",
+      "*", // Allow all origins for maximum compatibility
+    ],
+    credentials: true,
+  },
+});
+
+io.on("connection", (socket) => {
+  console.log("Client connected");
+
+  socket.on("join", (downloadId) => {
+    socket.join(downloadId);
+    console.log(`Client joined download room: ${downloadId}`);
+  });
+});
+
+app.use(
+  cors({
+    origin: ["https://videodl.netlify.app", "http://localhost:5173"],
+    credentials: true,
+  })
+);
+app.use(bodyParser.json());
+
+// ✅ Fix for rate-limit trust proxy validation
+const limiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 30,
+  message: {
+    error: "Too many requests from this IP, please try again later.",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use(limiter);
+
+// Serve frontend static files
+app.use(express.static(path.join(__dirname, "../video-downloader/dist")));
+
+// Utility to get cookies file based on URL domain
+function getCookiesFile(url) {
+  // Always use instagram.com_cookies.txt for any Instagram URL
+  if (/instagram\.com/i.test(url)) {
+    const file = path.join(__dirname, "instagram.com_cookies.txt");
+    console.log("[Instagram] __dirname:", __dirname);
+    console.log("[Instagram] process.cwd():", process.cwd());
+    console.log("[Instagram] Checking for cookies file at:", file);
+    if (fs.existsSync(file)) {
+      console.log("[Instagram] Using cookies file:", file);
+      return file;
+    } else {
+      console.warn("[Instagram] instagram.com_cookies.txt not found at:", file);
+      return null;
+    }
+  }
+  // Other platforms as before
+  const domainCookiesMap = {
+    "facebook.com": "facebook.com_cookies.txt",
+    "tiktok.com": "tiktok.com_cookies.txt",
+    "vt.tiktok.com": "tiktok.com_cookies.txt",
+    "youtube.com": "youtube.com_cookies.txt",
+    "youtu.be": "youtube.com_cookies.txt",
+    "twitter.com": "x.com_cookies.txt",
+    "x.com": "x.com_cookies.txt",
+  };
+  for (const domain in domainCookiesMap) {
+    if (url.includes(domain)) {
+      const file = path.join(__dirname, domainCookiesMap[domain]);
+      return fs.existsSync(file) ? file : null;
+    }
+  }
+  return null;
+}
+
+// Sanitize filename for safety
+function sanitizeFilename(name) {
+  // Remove non-ASCII and special characters for ffmpeg compatibility
+  return name
+    .replace(/[^a-zA-Z0-9-_\.]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .substring(0, 80);
+}
+
+// Helper: validate URL is a valid video link
+function isValidVideoUrl(url) {
+  // Accept YouTube, Facebook, Instagram, TikTok, X/Twitter, TikTok short links
+  // Allow both http and https, and also protocol-relative URLs
+  return (
+    typeof url === "string" &&
+    /^(https?:)?\/\/([a-zA-Z0-9-]+\.)?(youtube\.com|youtu\.be|m\.youtube\.com|music\.youtube\.com|facebook\.com|fb\.watch|instagram\.com|tiktok\.com|vt\.tiktok\.com|twitter\.com|x\.com)\//.test(
+      url
+    )
+  );
+}
+
+// Download helper with socket.io progress emit
+async function downloadWithProgress({ url, quality, downloadId, io }) {
+  const tmpDir = tmp.dirSync({ unsafeCleanup: true });
+
+  try {
+    // Detect cookies.txt file if needed for private videos
+    const cookiesFile = getCookiesFile(url);
+
+    // Get video info for filename
+    const infoArgs = ["--no-playlist"];
+    if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
+    infoArgs.push(url);
+
+    const info = await ytDlpWrap.getVideoInfo(infoArgs);
+    const safeFilename = sanitizeFilename(info.title || uuidv4());
+    const outputPath = path.join(tmpDir.name, `${safeFilename}.mp4`);
+
+    return new Promise((resolve, reject) => {
+      const args = ["--no-playlist", "--newline"];
+
+      // Add cookies if available
+      if (cookiesFile) {
+        args.push("--cookies", cookiesFile);
+      }
+
+      // Handle format
+      if (url.includes("facebook.com")) {
+        // Always use best H.264 video + AAC audio for Facebook for compatibility
+        args.push("-f", "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+        args.push("--merge-output-format", "mp4");
+        args.push("--recode-video", "mp4");
+      } else if (url.includes("x.com") || url.includes("twitter.com")) {
+        // For X (Twitter), let yt-dlp pick and merge best video+audio (no recode)
+        args.push("-f", "bestvideo*+bestaudio/best");
+        args.push("--merge-output-format", "mp4");
+        // Do NOT add --recode-video for X
+      } else if (url.includes("instagram.com")) {
+        // For Instagram: allow user to select any available format (audio or video)
+        if (quality) {
+          args.push("-f", quality);
+        } else {
+          // Default: best MP4 video+audio for compatibility
+          args.push("-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
+        }
+        args.push("--merge-output-format", "mp4");
+        args.push("--recode-video", "mp4");
+        // Add browser-like headers for Instagram
+        args.push(
+          "--user-agent",
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        );
+        args.push("--add-header", "Accept-Language: en-US,en;q=0.9");
+        if (!cookiesFile) {
+          console.warn(
+            "[Instagram] No cookies file found. Some public videos may require login. If you see errors, please provide an up-to-date cookies file from your browser."
+          );
+        }
+      } else if (quality) {
+        // For YouTube: always use the user-selected format, merging with bestaudio if video-only
+        if (url.includes("youtube.com") || url.includes("youtu.be")) {
+          const selectedFormat = (info.formats || []).find(
+            (f) => f.format_id === quality
+          );
+          if (
+            selectedFormat &&
+            selectedFormat.vcodec === "none" &&
+            selectedFormat.acodec &&
+            selectedFormat.acodec !== "none"
+          ) {
+            // Audio-only: use the selected format as-is (no mp4 merge/recode)
+            args.push("-f", quality);
+            // Remove mp4 merge/recode flags later
+          } else if (
+            selectedFormat &&
+            selectedFormat.vcodec &&
+            selectedFormat.acodec === "none"
+          ) {
+            // Video-only: merge with best audio
+            args.push("-f", `${quality}+bestaudio[acodec^=mp4a]/best`);
+            args.push("--merge-output-format", "mp4");
+            args.push("--recode-video", "mp4");
+          } else {
+            // Use the exact user-selected format
+            args.push("-f", quality);
+            args.push("--merge-output-format", "mp4");
+            args.push("--recode-video", "mp4");
+          }
+        } else {
+          args.push("-f", quality);
+          args.push("--merge-output-format", "mp4");
+          args.push("--recode-video", "mp4");
+        }
+      } else {
+        // Default: best H.264 video + AAC audio, fallback to best
+        args.push("-f", "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+        args.push("--merge-output-format", "mp4");
+        args.push("--recode-video", "mp4");
+      }
+
+      // Merge into MP4 using ffmpeg
+      // Only add these if not audio-only
+      const isAudioOnly =
+        url.includes("youtube.com") || url.includes("youtu.be")
+          ? (() => {
+              const selectedFormat =
+                quality &&
+                (info.formats || []).find((f) => f.format_id === quality);
+              return (
+                selectedFormat &&
+                selectedFormat.vcodec === "none" &&
+                selectedFormat.acodec &&
+                selectedFormat.acodec !== "none"
+              );
+            })()
+          : false;
+      if (!isAudioOnly) {
+        args.push("--merge-output-format", "mp4");
+        args.push("--recode-video", "mp4");
+      }
+
+      // Safe output file pattern
+      args.push("-o", `${safeFilename}.%(ext)s`);
+
+      // Add verbose for debugging (optional)
+      // args.push("--verbose");
+
+      args.push(url);
+
+      let triedFallback = false;
+
+      function runYtDlp(currentArgs) {
+        const ytProcess = ytDlpWrap.exec(currentArgs, { cwd: tmpDir.name });
+        ytProcess
+          .on("progress", (progress) => {
+            if (downloadId) {
+              io.to(downloadId).emit("progress", {
+                percent: progress.percent,
+              });
+            }
+          })
+          .on("stdout", (data) => {
+            console.log(`[yt-dlp stdout] ${data}`);
+          })
+          .on("stderr", (data) => {
+            console.error(`[yt-dlp stderr] ${data}`);
+          })
+          .on("error", (err) => {
+            // Improved error logging
+            console.error("yt-dlp error:", err);
+            if (err && err.stderr) {
+              console.error("yt-dlp stderr output:", err.stderr);
+            }
+            if (
+              !triedFallback &&
+              !url.includes("facebook.com") &&
+              quality &&
+              err &&
+              (err.message?.includes("Requested format is not available") ||
+                err.stderr?.includes("Requested format is not available"))
+            ) {
+              triedFallback = true;
+              const fallbackArgs = [...args];
+              // Replace the format argument with best compatible
+              const formatIndex = fallbackArgs.findIndex(
+                (a, i) => a === "-f" && fallbackArgs[i + 1] === quality
+              );
+              if (formatIndex !== -1) {
+                fallbackArgs[formatIndex + 1] =
+                  "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best";
+              }
+              return runYtDlp(fallbackArgs);
+            }
+            tmpDir.removeCallback();
+            reject(err);
+          })
+          .on("close", () => {
+            // Check for output
+            const downloadedFile = fs.readdirSync(tmpDir.name).find(
+              (file) => file.startsWith(safeFilename + ".") // match any extension
+            );
+
+            if (!downloadedFile) {
+              tmpDir.removeCallback();
+              return reject(new Error("Download failed or file not found"));
+            }
+
+            // --- TikTok/other: Detect .txt file (error page) and reject ---
+            if (downloadedFile.endsWith('.txt')) {
+              const errorContent = fs.readFileSync(path.join(tmpDir.name, downloadedFile), 'utf8');
+              tmpDir.removeCallback();
+              return reject(new Error(
+                `Download failed: TikTok (or platform) returned a .txt file instead of video.\n\nError content:\n${errorContent.substring(0, 500)}`
+              ));
+            }
+
+            const fullPath = path.join(tmpDir.name, downloadedFile);
+
+            resolve({
+              filePath: fullPath,
+              filename: downloadedFile,
+              cleanup: tmpDir.removeCallback,
+            });
+          });
+      }
+      runYtDlp(args);
+    });
+  } catch (err) {
+    tmpDir.removeCallback();
+    throw err;
+  }
+}
+
+// API: initialize download, return formats + downloadId + filename
+app.post(
+  "/api/init-download",
+  body("url")
+    .custom(isValidVideoUrl)
+    .withMessage("Invalid or unsupported video URL."),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: errors.array()[0].msg });
+    }
+
+    try {
+      const { url } = req.body;
+      const cookiesFile = getCookiesFile(url);
+
+      // REMOVED cookies check to allow fetching without cookies for public videos
+
+      // Fetch video info with cookies if available
+      const args = cookiesFile
+        ? ["--no-playlist", "--cookies", cookiesFile, url]
+        : ["--no-playlist", url];
+
+      const info = await ytDlpWrap.getVideoInfo(args);
+      const filename = sanitizeFilename(info.title || "video");
+
+      // Filter formats with URLs (exclude dash, live etc. if desired)
+      // Filter formats with playable video and exclude AV1
+      const formats = (info.formats || []).filter(
+        (f) => f.url && (!f.vcodec || !f.vcodec.includes("av01"))
+      );
+
+      res.json({
+        downloadId: uuidv4(),
+        filename,
+        formats,
+      });
+    } catch (err) {
+      console.error("Init download error:", err);
+      res.status(500).json({ error: "Failed to get video info" });
+    }
+  }
+);
+
+app.get("/api/ping", (req, res) => {
+  res.send("Backend is alive!");
+});
+
+// API: download video (or metadata if no quality specified)
+app.post(
+  "/api/downloads",
+  [
+    body("url")
+      .custom(isValidVideoUrl)
+      .withMessage("Invalid or unsupported video URL."),
+    body("quality").optional().isString().isLength({ max: 50 }), // Allow longer format_id
+    body("downloadId").optional().isString().isLength({ max: 64 }),
+  ],
+  async (req, res) => {
+    // Log request body for debugging
+    console.log("/api/downloads request body:", req.body);
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      // Log validation errors for debugging
+      console.error("/api/downloads validation errors:", errors.array());
+      return res.status(400).json({ error: errors.array()[0].msg });
+    }
+
+    const { url, quality, downloadId } = req.body;
+
+    try {
+      const cookiesFile = getCookiesFile(url);
+
+      // REMOVED cookies check to allow fetching without cookies for public videos
+
+      // If quality not specified, return metadata (playlist or single)
+      if (!quality) {
+        const args = cookiesFile
+          ? [
+              "--cookies",
+              cookiesFile,
+              "--dump-single-json",
+              "--flat-playlist",
+              url,
+            ]
+          : ["--dump-single-json", "--flat-playlist", url];
+
+        const infoJson = await ytDlpWrap.execPromise(args);
+        const info = JSON.parse(infoJson);
+
+        if (Array.isArray(info.entries)) {
+          // Playlist detected: fetch full info per video
+          const videos = await Promise.all(
+            info.entries.map(async (v) => {
+              // Use url from entry or build youtube url fallback
+              const videoUrl =
+                v.url || `https://www.youtube.com/watch?v=${v.id}`;
+
+              const fullInfoArgs = cookiesFile
+                ? ["--cookies", cookiesFile, "--dump-single-json", videoUrl]
+                : ["--dump-single-json", videoUrl];
+
+              const fullInfoJson = await ytDlpWrap.execPromise(fullInfoArgs);
+              const fullInfo = JSON.parse(fullInfoJson);
+
+              // --- Thumbnail robust extraction ---
+              let thumbnail = fullInfo.thumbnail || null;
+              // Fallback: use first HTTPS thumbnail from thumbnails array
+              if (
+                (!thumbnail || !/^https:/.test(thumbnail)) &&
+                Array.isArray(fullInfo.thumbnails)
+              ) {
+                const httpsThumb = fullInfo.thumbnails.find(
+                  (t) => t.url && t.url.startsWith("https:")
+                );
+                if (httpsThumb) thumbnail = httpsThumb.url;
+              }
+
+              return {
+                id: fullInfo.id,
+                title: fullInfo.title || `Video ${fullInfo.id}`,
+                url: fullInfo.webpage_url || videoUrl,
+                thumbnail,
+                formats: fullInfo.formats || [],
+              };
+            })
+          );
+
+          return res.json({
+            isPlaylist: true,
+            playlistTitle: info.title || "Untitled Playlist",
+            videos,
+          });
+        } else {
+          // Single video metadata
+          // --- Thumbnail robust extraction for single video ---
+          let singleInfo = info;
+          let thumbnail = singleInfo.thumbnail || null;
+          if (
+            (!thumbnail || !/^https:/.test(thumbnail)) &&
+            Array.isArray(singleInfo.thumbnails)
+          ) {
+            const httpsThumb = singleInfo.thumbnails.find(
+              (t) => t.url && t.url.startsWith("https:")
+            );
+            if (httpsThumb) thumbnail = httpsThumb.url;
+          }
+          singleInfo.thumbnail = thumbnail;
+          return res.json(singleInfo);
+        }
+      }
+
+      // Download with progress emitting
+      const { filePath, filename, cleanup } = await downloadWithProgress({
+        url,
+        quality,
+        downloadId,
+        io,
+      });
+
+      const stat = fs.statSync(filePath);
+
+      res.writeHead(200, {
+        "Content-Type": "video/mp4",
+        "Content-Length": stat.size,
+        "Content-Disposition": contentDisposition(filename),
+      });
+
+      const stream = fs.createReadStream(filePath);
+      let bytesSent = 0;
+      let lastEmit = Date.now();
+      let lastBytes = 0;
+      const totalSize = stat.size;
+
+      stream.on("data", (chunk) => {
+        bytesSent += chunk.length;
+        const percent = (bytesSent / totalSize) * 100;
+        if (downloadId) {
+          io.to(downloadId).emit("progress", {
+            percent,
+          });
+        }
+      });
+      // Emit final progress with last speed and percent=100 when stream ends
+      stream.on("end", () => {
+        if (downloadId) {
+          io.to(downloadId).emit("progress", {
+            percent: 100,
+          });
+        }
+      });
+      stream.pipe(res);
+
+      stream.on("close", cleanup);
+      stream.on("error", (err) => {
+        console.error("Stream error:", err);
+        cleanup();
+        res.status(500).send("Failed to stream file");
+      });
+    } catch (err) {
+      console.error("Failed at /api/downloads with URL:", req.body.url);
+      console.error("Error details:", err.stderr || err.message || err);
+      // Platform-specific error handling
+      const errMsg = (err && (err.stderr || err.message || "")).toString();
+      // Instagram
+      if (
+        /instagram/i.test(errMsg) &&
+        /login required|rate-limit reached|not available|use --cookies|Main webpage is locked behind the login page|unable to extract shared data/i.test(
+          errMsg
+        )
+      ) {
+        // Log the full yt-dlp error for debugging
+        console.error("[Instagram 403] yt-dlp error details:", errMsg);
+        return res.status(403).json({
+          error:
+            "Instagram requires login/cookies to download this video. Please log in and provide cookies, or try a different public video.",
+          details: errMsg,
+        });
+      }
+      // Facebook
+      if (
+        /facebook/i.test(errMsg) &&
+        /login required|not available|cookies/i.test(errMsg)
+      ) {
+        return res.status(403).json({
+          error:
+            "Facebook requires login/cookies to download this video. Please log in and provide cookies, or try a different public video.",
+          details: errMsg,
+        });
+      }
+      // TikTok
+      if (
+        /tiktok/i.test(errMsg) &&
+        /login required|not available|cookies|forbidden|403/i.test(errMsg)
+      ) {
+        return res.status(403).json({
+          error:
+            "TikTok requires login/cookies to download this video. Please log in and provide cookies, or try a different public video.",
+          details: errMsg,
+        });
+      }
+      // YouTube
+      if (
+        /youtube|youtu\.be/i.test(errMsg) &&
+        (/login required|not available|cookies|This video is private|sign in|429|Too Many Requests|quota exceeded|rate limit/i.test(
+          errMsg
+        ) ||
+          /HTTP Error 429|Too Many Requests|quota/i.test(errMsg))
+      ) {
+        return res.status(429).json({
+          error:
+            "YouTube is temporarily blocking downloads from this server due to too many requests (HTTP 429 / rate limit). Please try again later, or use a different server or your local machine.",
+          details: errMsg,
+        });
+      }
+      res.status(500).json({ error: "Download failed", details: err.message });
+    }
+  }
+);
+
+// API: multi-downloads (playlist ZIP)
+app.post(
+  "/api/multi-downloads",
+  [
+    body("videos").isArray({ min: 1, max: 20 }),
+    body("videos.*.url")
+      .custom(isValidVideoUrl)
+      .withMessage("Invalid or unsupported video URL in playlist."),
+    body("videos.*.quality").optional().isString().isLength({ max: 20 }),
+    body("videos.*.title").optional().isString().isLength({ max: 200 }),
+  ],
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: errors.array()[0].msg });
+    }
+
+    const { videos } = req.body; // expect: [{ url, quality, title }, ...]
+
+    if (!Array.isArray(videos) || videos.length === 0) {
+      return res.status(400).json({ error: "No videos provided." });
+    }
+
+    const tmpDir = tmp.dirSync({ unsafeCleanup: true });
+    const archiveFilename = `${uuidv4()}.zip`;
+    const archivePath = path.join(tmpDir.name, archiveFilename);
+
+    const output = fs.createWriteStream(archivePath);
+    const archive = archiver("zip", { zlib: { level: 9 } });
+
+    archive.pipe(output);
+
+    try {
+      let totalVideos = videos.length;
+      let completedVideos = 0;
+      for (const video of videos) {
+        const { url, quality, title } = video;
+        const cookiesFile = getCookiesFile(url);
+
+        // REMOVED cookies check to allow fetching without cookies for public videos
+
+        const baseArgs = cookiesFile
+          ? ["--cookies", cookiesFile, "--no-playlist", url]
+          : ["--no-playlist", url];
+        const info = await ytDlpWrap.getVideoInfo(baseArgs);
+
+        let formatArg;
+        if (url.includes("facebook.com")) {
+          formatArg = "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best";
+        } else if (url.includes("instagram.com")) {
+          formatArg = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best";
+        } else if (quality) {
+          if (url.includes("youtube.com") || url.includes("youtu.be")) {
+            const selectedFormat = (info.formats || []).find(
+              (f) => f.format_id === quality
+            );
+            if (
+              selectedFormat &&
+              selectedFormat.vcodec &&
+              selectedFormat.acodec === "none"
+            ) {
+              formatArg =
+                "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best";
+            } else {
+              formatArg = quality;
+            }
+          } else {
+            formatArg = quality;
+          }
+        } else {
+          formatArg = "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best";
+        }
+
+        // Use provided title sanitized or fallback
+        const safeTitle = title
+          ? sanitizeFilename(title)
+          : info.title
+          ? sanitizeFilename(info.title)
+          : uuidv4();
+
+        const filename = `${safeTitle}.mp4`;
+        const filePath = path.join(tmpDir.name, filename);
+
+        await ytDlpWrap.execPromise(
+          [
+            ...baseArgs,
+            "-f",
+            formatArg,
+            "--merge-output-format",
+            "mp4",
+            "--recode-video",
+            "mp4",
+            "-o",
+            filename,
+          ],
+          { cwd: tmpDir.name }
+        );
+
+        if (!fs.existsSync(filePath)) {
+          tmpDir.removeCallback();
+          return res.status(500).json({ error: `File not found for ${url}` });
+        }
+
+        archive.file(filePath, { name: filename });
+        completedVideos++;
+        // Emit progress after each video is added to the archive
+        io.emit("progress", {
+          percent: Math.round((completedVideos / totalVideos) * 100),
+          isZip: true,
+        });
+      }
+
+      await archive.finalize();
+
+      output.on("close", () => {
+        // Emit 100% progress when zip is done
+        io.emit("progress", {
+          percent: 100,
+          isZip: true,
+        });
+        res.setHeader("Content-Disposition", contentDisposition("videos.zip"));
+        res.setHeader("Content-Type", "application/zip");
+
+        const stream = fs.createReadStream(archivePath);
+        stream.pipe(res);
+
+        stream.on("close", () => tmpDir.removeCallback());
+        stream.on("error", (err) => {
+          console.error("Stream error:", err);
+          tmpDir.removeCallback();
+          res.status(500).send("Failed to stream archive");
+        });
+      });
+    } catch (err) {
+      console.error("Failed at /api/multi-downloads", err);
+      tmpDir.removeCallback();
+      res.status(500).send("Multi-download error occurred");
+    }
+  }
+);
+
+// Proxy thumbnail image fetching
+app.get("/api/proxy-thumbnail", async (req, res) => {
+  const { url } = req.query;
+  if (!url || !/^https?:\/\//.test(url)) {
+    return res.status(400).send("Invalid URL");
+  }
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+        Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+      redirect: "follow",
+    });
+    if (!response.ok) {
+      res.set("Access-Control-Allow-Origin", "*");
+      return res
+        .status(502)
+        .send(
+          `Failed to fetch image: ${response.status} ${response.statusText}`
+        );
+    }
+    res.set(
+      "Content-Type",
+      response.headers.get("content-type") || "image/jpeg"
+    );
+    res.set("Access-Control-Allow-Origin", "*");
+    response.body.pipe(res);
+  } catch (e) {
+    console.error("Proxy thumbnail error:", e);
+    res.set("Access-Control-Allow-Origin", "*");
+    res
+      .status(500)
+      .send("Error proxying image: " + (e && e.message ? e.message : e));
+  }
+});
+
+// Serve frontend for all non-API, non-static routes (must be last!)
+app.use(express.static(path.join(__dirname, "../video-downloader/dist")));
+
+app.get(/^\/(?!api\/).*/, (req, res) => {
+  res.sendFile(path.join(__dirname, "../video-downloader/dist/index.html"));
+});
+
+// Start the server
+server.listen(PORT, () => {
+  console.log(`✅ Backend running at http://localhost:${PORT}`);
+});
+///index.js(1)
+const express = require("express");
+const cors = require("cors");
+const bodyParser = require("body-parser");
+const fs = require("fs");
+const path = require("path");
+const tmp = require("tmp");
+const { v4: uuidv4 } = require("uuid");
+const YtDlpWrap = require("yt-dlp-wrap").default;
+const contentDisposition = require("content-disposition");
+const http = require("http");
+const { body, validationResult } = require("express-validator");
+const os = require("os");
+const { PassThrough } = require("stream");
+const { spawn } = require("child_process");
+
+
+const isWindows = os.platform() === "win32";
+const ytDlpPath = isWindows
+  ? path.resolve(__dirname, "bin", "yt-dlp.exe")
+  : path.resolve(__dirname, "bin", "yt-dlp");
+const ytDlpWrap = new YtDlpWrap(ytDlpPath);
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const server = http.createServer(app);
+
+app.use(
+  cors({
+    origin: ["https://videodl.netlify.app", "http://localhost:5173"],
+    credentials: true,
+  })
+);
+app.use(bodyParser.json());
+app.use(express.static(path.join(__dirname, "../video-downloader/dist")));
+
+// Utility to get cookies file based on URL domain
+function getCookiesFile(url) {
+  if (/instagram\.com/i.test(url)) {
+    const file = path.join(__dirname, "instagram.com_cookies.txt");
+    if (fs.existsSync(file)) return file;
+    return null;
+  }
+  const domainCookiesMap = {
+    "facebook.com": "facebook.com_cookies.txt",
+    "tiktok.com": "tiktok.com_cookies.txt",
+    "vt.tiktok.com": "tiktok.com_cookies.txt",
+    "youtube.com": "youtube.com_cookies.txt",
+    "youtu.be": "youtube.com_cookies.txt",
+    "twitter.com": "x.com_cookies.txt",
+    "x.com": "x.com_cookies.txt",
+  };
+  for (const domain in domainCookiesMap) {
+    if (url.includes(domain)) {
+      const file = path.join(__dirname, domainCookiesMap[domain]);
+      return fs.existsSync(file) ? file : null;
+    }
+  }
+  return null;
+}
+
+// Sanitize filename for safety
+function sanitizeFilename(name) {
+  return name
+    .replace(/[^a-zA-Z0-9-_\.]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .substring(0, 80);
+}
+
+// Helper: validate URL is a valid video link
+function isValidVideoUrl(url) {
+  return (
+    typeof url === "string" &&
+    /^(https?:)?\/\/([a-zA-Z0-9-]+\.)?(youtube\.com|youtu\.be|m\.youtube\.com|music\.youtube\.com|facebook\.com|fb\.watch|instagram\.com|tiktok\.com|vt\.tiktok\.com|twitter\.com|x\.com)\//.test(
+      url
+    )
+  );
+}
+
+// API: download video (GET for direct browser download, stream instantly)
+app.get("/api/downloads", async (req, res) => {
+  const url = req.query.url;
+  const quality = req.query.quality;
+
+  if (!isValidVideoUrl(url)) {
+    return res.status(400).json({ error: "Invalid or unsupported video URL." });
+  }
+
+  try {
+    const cookiesFile = getCookiesFile(url);
+    const infoArgs = ["--no-playlist"];
+    if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
+    infoArgs.push(url);
+
+    const info = await ytDlpWrap.getVideoInfo(infoArgs);
+    const safeFilename = sanitizeFilename(info.title || "video") + ".mp4";
+
+    const args = ["--no-playlist", "-f"];
+    if (url.includes("facebook.com")) {
+      args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+    } else if (url.includes("instagram.com")) {
+      args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
+    } else if (quality) {
+      args.push(quality);
+    } else {
+      args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+    }
+
+    args.push("--merge-output-format", "mp4");
+    args.push("--recode-video", "mp4");
+    args.push("-o", "-", url); // Output to stdout
+
+    const ytProcess = spawn(ytDlpPath, args, {
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+
+    const stream = new PassThrough();
+    let responseEnded = false;
+
+    // Set headers immediately
+    res.setHeader("Content-Disposition", contentDisposition(safeFilename));
+    res.setHeader("Content-Type", "video/mp4");
+    res.setHeader("Transfer-Encoding", "chunked");
+
+    // Pipe the yt-dlp output directly to client
+    stream.pipe(res);
+    ytProcess.stdout.pipe(stream);
+
+    ytProcess.stderr.on("data", (data) => {
+      console.error("[yt-dlp stderr]", data.toString());
+    });
+
+    ytProcess.on("error", (err) => {
+      console.error("yt-dlp error (stream):", err);
+      if (!responseEnded) {
+        responseEnded = true;
+        if (!res.headersSent) {
+          res.status(500).end("yt-dlp error");
+        } else {
+          stream.end();
+        }
+      }
+    });
+
+    ytProcess.on("close", (code) => {
+      if (!responseEnded) {
+        responseEnded = true;
+        stream.end();
+      }
+      if (code !== 0) {
+        console.error("yt-dlp exited with code", code);
+      }
+    });
+
+  } catch (err) {
+    console.error("Download failed:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Download failed", details: err.message });
+    } else {
+      res.end();
+    }
+  }
+});
+
+
+
+// Proxy thumbnail image fetching
+app.get("/api/proxy-thumbnail", async (req, res) => {
+  const { url } = req.query;
+  if (!url || !/^https?:\/\//.test(url)) {
+    return res.status(400).send("Invalid URL");
+  }
+  try {
+    let fetch;
+    try {
+      fetch = require("node-fetch").default;
+    } catch (e) {
+      fetch = (...args) =>
+        import("node-fetch").then(({ default: fetch }) => fetch(...args));
+    }
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+        Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+      redirect: "follow",
+    });
+    if (!response.ok) {
+      res.set("Access-Control-Allow-Origin", "*");
+      return res
+        .status(502)
+        .send(
+          `Failed to fetch image: ${response.status} ${response.statusText}`
+        );
+    }
+    res.set(
+      "Content-Type",
+      response.headers.get("content-type") || "image/jpeg"
+    );
+    res.set("Access-Control-Allow-Origin", "*");
+    response.body.pipe(res);
+  } catch (e) {
+    console.error("Proxy thumbnail error:", e);
+    res.set("Access-Control-Allow-Origin", "*");
+    res
+      .status(500)
+      .send("Error proxying image: " + (e && e.message ? e.message : e));
+  }
+});
+
+// Serve frontend for all non-API, non-static routes (must be last!)
+app.use(express.static(path.join(__dirname, "../video-downloader/dist")));
+app.get(/^\/(?!api\/).*/, (req, res) => {
+  res.sendFile(path.join(__dirname, "../video-downloader/dist/index.html"));
+});
+
+// POST /api/info - fetch video info (for frontend)
+app.post("/api/info", async (req, res) => {
+  const { url } = req.body;
+  if (!isValidVideoUrl(url)) {
+    return res.status(400).json({ error: "Invalid or unsupported video URL." });
+  }
+  try {
+    const cookiesFile = getCookiesFile(url);
+    const infoArgs = ["--no-playlist"];
+    if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
+    infoArgs.push(url);
+    const info = await ytDlpWrap.getVideoInfo(infoArgs);
+
+    // If playlist
+    if (info.entries && Array.isArray(info.entries)) {
+      res.json({
+        isPlaylist: true,
+        playlistTitle: info.title,
+        videos: info.entries.map((entry) => ({
+          id: entry.id,
+          title: entry.title,
+          url: entry.url || entry.webpage_url,
+          thumbnail: entry.thumbnail,
+          formats: entry.formats,
+        })),
+      });
+    } else {
+      // Single video
+      res.json(info);
+    }
+  } catch (err) {
+    console.error("Failed at POST /api/info:", err);
+    res.status(500).json({ error: "Failed to fetch video info", details: err.message });
+  }
+});
+
+// GET /api/download - stream video to browser
+app.get("/api/download", async (req, res) => {
+  const url = req.query.url;
+  const quality = req.query.quality;
+  if (!isValidVideoUrl(url)) {
+    return res.status(400).json({ error: "Invalid or unsupported video URL." });
+  }
+  try {
+    const cookiesFile = getCookiesFile(url);
+    // Get video info for filename
+    const infoArgs = ["--no-playlist"];
+    if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
+    infoArgs.push(url);
+    const info = await ytDlpWrap.getVideoInfo(infoArgs);
+    const safeFilename = sanitizeFilename(info.title || uuidv4()) + ".mp4";
+
+    // Build yt-dlp args for streaming
+    const args = ["--no-playlist", "-f"];
+    if (url.includes("facebook.com")) {
+      args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+    } else if (url.includes("instagram.com")) {
+      args.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
+    } else if (quality) {
+      args.push(quality);
+    } else {
+      args.push("bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+    }
+    args.push("--merge-output-format", "mp4");
+    args.push("--recode-video", "mp4");
+    args.push("-o", "-", url); // Output to stdout
+
+    res.setHeader("Content-Disposition", contentDisposition(safeFilename));
+    res.setHeader("Content-Type", "video/mp4");
+
+    const { spawn } = require("child_process");
+    const ytDlpBin = ytDlpPath;
+    const ytArgs = args;
+    const ytProcess = spawn(ytDlpBin, ytArgs, {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    ytProcess.stdout.pipe(res, { end: true });
+
+    ytProcess.stderr.on("data", (data) => {
+      console.error(`[yt-dlp stderr]`, data.toString());
+    });
+    ytProcess.on("error", (err) => {
+      console.error("yt-dlp error (stream):", err);
+      res.status(500).end("yt-dlp error");
+    });
+    ytProcess.on("close", (code) => {
+      if (code !== 0) {
+        console.error("yt-dlp exited with code", code);
+      }
+    });
+  } catch (err) {
+    console.error("Failed at GET /api/download (stream) with URL:", url);
+    console.error("Error details:", err.stderr || err.message || err);
+    res.status(500).json({ error: "Download failed", details: err.message });
+  }
+});
+
+server.listen(PORT, () => {
+  console.log(`✅ Backend running at http://localhost:${PORT}`);
+});
+
+
