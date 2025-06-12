@@ -36,9 +36,7 @@ app.use(express.static(path.join(__dirname, "../video-downloader/dist")));
 // Utility to get cookies file based on URL domain
 function getCookiesFile(url) {
   if (/instagram\.com/i.test(url)) {
-    const file = path.join(__dirname, "instagram.com_cookies.txt");
-    if (fs.existsSync(file)) return file;
-    return null;
+    return path.join(__dirname, "instagram.com_cookies.txt");
   }
   const domainCookiesMap = {
     "facebook.com": "facebook.com_cookies.txt",
@@ -269,12 +267,18 @@ app.post("/api/download-playlist", async (req, res) => {
       const info = await ytDlpWrap.getVideoInfo(infoArgs);
       let selectedFormat = null;
       if (video.quality && info.formats) {
-        selectedFormat = info.formats.find(f => f.format_id === video.quality);
+        selectedFormat = info.formats.find(
+          (f) => f.format_id === video.quality
+        );
       }
       const args = [];
       if (!isInstagramUrl(video.url)) args.push("--no-playlist");
       args.push("-f");
-      if (selectedFormat && selectedFormat.acodec !== "none" && selectedFormat.vcodec !== "none") {
+      if (
+        selectedFormat &&
+        selectedFormat.acodec !== "none" &&
+        selectedFormat.vcodec !== "none"
+      ) {
         args.push(video.quality);
       } else if (video.quality) {
         args.push(video.quality);
