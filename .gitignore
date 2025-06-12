@@ -11,3 +11,5 @@ videos/
 
 backend/node_modules/
 video-downloader/node_modules/
+
+*_cookies.txt
