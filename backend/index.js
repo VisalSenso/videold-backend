@@ -37,8 +37,11 @@ app.use(express.static(path.join(__dirname, "../video-downloader/dist")));
 function getCookiesFile(url) {
   if (/instagram\.com/i.test(url)) {
     const file = path.join(__dirname, "instagram.com_cookies.txt");
-    if (fs.existsSync(file)) return file;
-    console.log("Using Instagram cookies:", file); // Add this line
+    if (fs.existsSync(file)) {
+      console.log("✅ Using Instagram cookies:", file);
+      return file;
+    }
+    console.log("❌ Instagram cookies file missing:", file);
     return null;
   }
   const domainCookiesMap = {
