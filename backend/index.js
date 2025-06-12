@@ -80,6 +80,10 @@ app.use(limiter);
 // Serve frontend static files
 app.use(express.static(path.join(__dirname, "../video-downloader/dist")));
 
+app.get(/^\/(?!api\/).*/, (req, res) => {
+  res.sendFile(path.join(__dirname, "../video-downloader/dist/index.html"));
+});
+
 // Utility to get cookies file based on URL domain
 function getCookiesFile(url) {
   // Always use instagram.com_cookies.txt for any Instagram URL
@@ -324,12 +328,20 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
             }
 
             // --- TikTok/other: Detect .txt file (error page) and reject ---
-            if (downloadedFile.endsWith('.txt')) {
-              const errorContent = fs.readFileSync(path.join(tmpDir.name, downloadedFile), 'utf8');
+            if (downloadedFile.endsWith(".txt")) {
+              const errorContent = fs.readFileSync(
+                path.join(tmpDir.name, downloadedFile),
+                "utf8"
+              );
               tmpDir.removeCallback();
-              return reject(new Error(
-                `Download failed: TikTok (or platform) returned a .txt file instead of video.\n\nError content:\n${errorContent.substring(0, 500)}`
-              ));
+              return reject(
+                new Error(
+                  `Download failed: TikTok (or platform) returned a .txt file instead of video.\n\nError content:\n${errorContent.substring(
+                    0,
+                    500
+                  )}`
+                )
+              );
             }
 
             const fullPath = path.join(tmpDir.name, downloadedFile);
