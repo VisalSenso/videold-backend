@@ -269,12 +269,18 @@ app.post("/api/download-playlist", async (req, res) => {
       const info = await ytDlpWrap.getVideoInfo(infoArgs);
       let selectedFormat = null;
       if (video.quality && info.formats) {
-        selectedFormat = info.formats.find(f => f.format_id === video.quality);
+        selectedFormat = info.formats.find(
+          (f) => f.format_id === video.quality
+        );
       }
       const args = [];
       if (!isInstagramUrl(video.url)) args.push("--no-playlist");
       args.push("-f");
-      if (selectedFormat && selectedFormat.acodec !== "none" && selectedFormat.vcodec !== "none") {
+      if (
+        selectedFormat &&
+        selectedFormat.acodec !== "none" &&
+        selectedFormat.vcodec !== "none"
+      ) {
         args.push(video.quality);
       } else if (video.quality) {
         args.push(video.quality);
@@ -305,3 +311,13 @@ app.post("/api/download-playlist", async (req, res) => {
 server.listen(PORT, () => {
   console.log(`✅ Backend running at http://localhost:${PORT}`);
 });
+
+// Only include selected videos
+const videosToDownload = videoInfo.videos.filter((v) =>
+  selectedVideos.has(v.id)
+);
+if (videosToDownload.length === 0) {
+  alert("Please select at least one video to download.");
+  setDownloadingZip(false);
+  return;
+}
