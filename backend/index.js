@@ -146,10 +146,8 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
   const tmpDir = tmp.dirSync({ unsafeCleanup: true });
 
   try {
-    // Detect cookies.txt file if needed for private videos
     const cookiesFile = getCookiesFile(url);
 
-    // Get video info for filename
     const infoArgs = ["--no-playlist"];
     if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
     infoArgs.push(url);
@@ -160,124 +158,91 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
 
     return new Promise((resolve, reject) => {
       const args = ["--no-playlist", "--newline"];
+      if (cookiesFile) args.push("--cookies", cookiesFile);
 
-      // Add cookies if available
-      if (cookiesFile) {
-        args.push("--cookies", cookiesFile);
-      }
+      let isAudioOnly = false;
 
-      // Handle format
+      // FACEBOOK
       if (url.includes("facebook.com")) {
-        // Use best MP4 video + M4A audio for compatibility (H.264 + AAC)
         args.push(
           "-f",
           "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
         );
-        // Ensure merged result is MP4
-        args.push("--merge-output-format", "mp4");
-        // Force re-encoding to MP4 in case merging fails or input isn't standard
-        args.push("--recode-video", "mp4");
-      } else if (url.includes("x.com") || url.includes("twitter.com")) {
-        // For X (Twitter), let yt-dlp pick and merge best video+audio (no recode)
+      }
+      // X / Twitter
+      else if (url.includes("x.com") || url.includes("twitter.com")) {
         args.push("-f", "bestvideo*+bestaudio/best");
-        args.push("--merge-output-format", "mp4");
-        // Do NOT add --recode-video for X
-      } else if (url.includes("instagram.com")) {
-        // For Instagram: allow user to select any available format (audio or video)
+      }
+      // INSTAGRAM
+      else if (url.includes("instagram.com")) {
         if (quality) {
           args.push("-f", quality);
         } else {
-          // Default: best MP4 video+audio for compatibility
           args.push("-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
         }
-        args.push("--merge-output-format", "mp4");
-        args.push("--recode-video", "mp4");
-        // Add browser-like headers for Instagram
         args.push(
           "--user-agent",
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         );
         args.push("--add-header", "Accept-Language: en-US,en;q=0.9");
+
         if (!cookiesFile) {
           console.warn(
-            "[Instagram] No cookies file found. Some public videos may require login. If you see errors, please provide an up-to-date cookies file from your browser."
+            "[Instagram] No cookies file found. If you see errors, please upload an up-to-date cookies.txt from your browser."
           );
         }
-      } else if (quality) {
-        // For YouTube: always use the user-selected format, merging with bestaudio if video-only
-        if (url.includes("youtube.com") || url.includes("youtu.be")) {
-          const selectedFormat = (info.formats || []).find(
-            (f) => f.format_id === quality
-          );
-          if (
-            selectedFormat &&
-            selectedFormat.vcodec === "none" &&
-            selectedFormat.acodec &&
-            selectedFormat.acodec !== "none"
-          ) {
-            // Audio-only: use the selected format as-is (no mp4 merge/recode)
-            args.push("-f", quality);
-            // Remove mp4 merge/recode flags later
-          } else if (
-            selectedFormat &&
-            selectedFormat.vcodec &&
-            selectedFormat.acodec === "none"
-          ) {
-            // Video-only: merge with best audio
-            args.push("-f", `${quality}+bestaudio[acodec^=mp4a]/best`);
-            args.push("--merge-output-format", "mp4");
-            args.push("--recode-video", "mp4");
-          } else {
-            // Use the exact user-selected format
-            args.push("-f", quality);
-            args.push("--merge-output-format", "mp4");
-            args.push("--recode-video", "mp4");
-          }
+      }
+      // YOUTUBE / DEFAULT
+      else if (quality) {
+        const selectedFormat = (info.formats || []).find(
+          (f) => f.format_id === quality
+        );
+
+        if (
+          selectedFormat &&
+          selectedFormat.vcodec === "none" &&
+          selectedFormat.acodec &&
+          selectedFormat.acodec !== "none"
+        ) {
+          // Audio-only
+          isAudioOnly = true;
+          args.push("-f", quality);
+        } else if (
+          selectedFormat &&
+          selectedFormat.vcodec &&
+          selectedFormat.acodec === "none"
+        ) {
+          // Video-only
+          args.push("-f", `${quality}+bestaudio[acodec^=mp4a]/best`);
         } else {
           args.push("-f", quality);
-          args.push("--merge-output-format", "mp4");
-          args.push("--recode-video", "mp4");
         }
       } else {
-        // Default: best H.264 video + AAC audio, fallback to best
+        // Default fallback
         args.push("-f", "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
-        args.push("--merge-output-format", "mp4");
-        args.push("--recode-video", "mp4");
       }
 
-      // Merge into MP4 using ffmpeg
-      // Only add these if not audio-only
-      const isAudioOnly =
-        url.includes("youtube.com") || url.includes("youtu.be")
-          ? (() => {
-              const selectedFormat =
-                quality &&
-                (info.formats || []).find((f) => f.format_id === quality);
-              return (
-                selectedFormat &&
-                selectedFormat.vcodec === "none" &&
-                selectedFormat.acodec &&
-                selectedFormat.acodec !== "none"
-              );
-            })()
-          : false;
-      if (!isAudioOnly) {
-        args.push("--merge-output-format", "mp4");
-        args.push("--recode-video", "mp4");
+      // Apply merge/recode only if needed
+      const needsMerging = !isAudioOnly;
+      if (needsMerging) {
+        if (!args.includes("--merge-output-format")) {
+          args.push("--merge-output-format", "mp4");
+        }
+        if (!args.includes("--recode-video")) {
+          args.push("--recode-video", "mp4");
+        }
       }
 
-      // Safe output file pattern
       args.push("-o", `${safeFilename}.%(ext)s`);
-
-      // Add verbose for debugging (optional)
-      // args.push("--verbose");
-
       args.push(url);
+
+      console.log("[yt-dlp final args]:", args.join(" "));
 
       let triedFallback = false;
 
       function runYtDlp(currentArgs) {
         const ytProcess = ytDlpWrap.exec(currentArgs, { cwd: tmpDir.name });
+
         ytProcess
           .on("progress", (progress) => {
             if (downloadId) {
@@ -293,22 +258,16 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
             console.error(`[yt-dlp stderr] ${data}`);
           })
           .on("error", (err) => {
-            // Improved error logging
             console.error("yt-dlp error:", err);
-            if (err && err.stderr) {
-              console.error("yt-dlp stderr output:", err.stderr);
-            }
             if (
               !triedFallback &&
               !url.includes("facebook.com") &&
               quality &&
-              err &&
               (err.message?.includes("Requested format is not available") ||
                 err.stderr?.includes("Requested format is not available"))
             ) {
               triedFallback = true;
               const fallbackArgs = [...args];
-              // Replace the format argument with best compatible
               const formatIndex = fallbackArgs.findIndex(
                 (a, i) => a === "-f" && fallbackArgs[i + 1] === quality
               );
@@ -318,28 +277,26 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
               }
               return runYtDlp(fallbackArgs);
             }
+
             tmpDir.removeCallback();
             reject(err);
           })
           .on("close", () => {
-            // Check for output
-            const downloadedFile = fs.readdirSync(tmpDir.name).find(
-              (file) => file.startsWith(safeFilename + ".") // match any extension
-            );
+            const downloadedFile = fs
+              .readdirSync(tmpDir.name)
+              .find((file) => file.startsWith(safeFilename + "."));
 
             if (!downloadedFile) {
               tmpDir.removeCallback();
               return reject(new Error("Download failed or file not found"));
             }
 
-            // --- TikTok/other: Detect .txt file (error page) and reject ---
             const fullPath = path.join(tmpDir.name, downloadedFile);
             const ext = path.extname(downloadedFile).toLowerCase();
-
-            // Read first few bytes to verify it's an actual video (basic signature check)
             const fileHeader = fs
               .readFileSync(fullPath, { encoding: "utf8", flag: "r" })
               .slice(0, 100);
+
             const isProbablyHtml =
               fileHeader.includes("<!DOCTYPE html") ||
               fileHeader.includes("<html");
@@ -349,13 +306,14 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
               tmpDir.removeCallback();
               return reject(
                 new Error(
-                  `Download failed: The downloaded file is not a valid video. It may be an error page.\n\nContent:\n${errorContent.substring(
+                  `Download failed: Not a valid video. Possibly an error page.\n\nContent:\n${errorContent.substring(
                     0,
                     500
                   )}`
                 )
               );
             }
+
             resolve({
               filePath: fullPath,
               filename: downloadedFile,
@@ -363,6 +321,7 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
             });
           });
       }
+
       runYtDlp(args);
     });
   } catch (err) {
@@ -370,6 +329,7 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
     throw err;
   }
 }
+
 
 // API: download video (or metadata if no quality specified)
 app.post(
