@@ -330,24 +330,29 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
             }
 
             // --- TikTok/other: Detect .txt file (error page) and reject ---
-            if (downloadedFile.endsWith(".txt")) {
-              const errorContent = fs.readFileSync(
-                path.join(tmpDir.name, downloadedFile),
-                "utf8"
-              );
+            const fullPath = path.join(tmpDir.name, downloadedFile);
+            const ext = path.extname(downloadedFile).toLowerCase();
+
+            // Read first few bytes to verify it's an actual video (basic signature check)
+            const fileHeader = fs
+              .readFileSync(fullPath, { encoding: "utf8", flag: "r" })
+              .slice(0, 100);
+            const isProbablyHtml =
+              fileHeader.includes("<!DOCTYPE html") ||
+              fileHeader.includes("<html");
+
+            if (ext === ".txt" || ext === ".html" || isProbablyHtml) {
+              const errorContent = fs.readFileSync(fullPath, "utf8");
               tmpDir.removeCallback();
               return reject(
                 new Error(
-                  `Download failed: TikTok (or platform) returned a .txt file instead of video.\n\nError content:\n${errorContent.substring(
+                  `Download failed: The downloaded file is not a valid video. It may be an error page.\n\nContent:\n${errorContent.substring(
                     0,
                     500
                   )}`
                 )
               );
             }
-
-            const fullPath = path.join(tmpDir.name, downloadedFile);
-
             resolve({
               filePath: fullPath,
               filename: downloadedFile,
