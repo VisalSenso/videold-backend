@@ -168,12 +168,15 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
 
       // Handle format
       if (url.includes("facebook.com")) {
-        // Always use best H.264 video + AAC audio for Facebook for compatibility
+        // Use best MP4 video + M4A audio for compatibility (H.264 + AAC)
         args.push(
           "-f",
           "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
         );
+        // Ensure merged result is MP4
         args.push("--merge-output-format", "mp4");
+        // Force re-encoding to MP4 in case merging fails or input isn't standard
+        args.push("--recode-video", "mp4");
       } else if (url.includes("x.com") || url.includes("twitter.com")) {
         // For X (Twitter), let yt-dlp pick and merge best video+audio (no recode)
         args.push("-f", "bestvideo*+bestaudio/best");
