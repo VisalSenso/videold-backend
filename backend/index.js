@@ -318,37 +318,45 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
           })
           .on("close", () => {
             // Check for output
-            const downloadedFile = fs.readdirSync(tmpDir.name).find(
-              (file) => file.startsWith(safeFilename + ".") // match any extension
+            // Find the merged .mp4 file (not .f*.mp4, not .txt, not .m4a)
+            const mergedFile = fs.readdirSync(tmpDir.name).find(
+              (file) =>
+                file.endsWith(".mp4") &&
+                !file.includes(".f") && // not a fragment
+                !file.includes(".temp") &&
+                !file.endsWith(".part.mp4")
             );
 
-            if (!downloadedFile) {
-              tmpDir.removeCallback();
-              return reject(new Error("Download failed or file not found"));
-            }
-
-            // --- TikTok/other: Detect .txt file (error page) and reject ---
-            if (downloadedFile.endsWith(".txt")) {
-              const errorContent = fs.readFileSync(
-                path.join(tmpDir.name, downloadedFile),
-                "utf8"
-              );
+            if (!mergedFile) {
+              // Check for .txt error file
+              const txtFile = fs
+                .readdirSync(tmpDir.name)
+                .find((file) => file.endsWith(".txt"));
+              if (txtFile) {
+                const errorContent = fs.readFileSync(
+                  path.join(tmpDir.name, txtFile),
+                  "utf8"
+                );
+                tmpDir.removeCallback();
+                return reject(
+                  new Error(
+                    `Download failed: Platform returned a .txt file instead of video.\n\nError content:\n${errorContent.substring(
+                      0,
+                      500
+                    )}`
+                  )
+                );
+              }
               tmpDir.removeCallback();
               return reject(
-                new Error(
-                  `Download failed: TikTok (or platform) returned a .txt file instead of video.\n\nError content:\n${errorContent.substring(
-                    0,
-                    500
-                  )}`
-                )
+                new Error("Download failed: No merged .mp4 file found.")
               );
             }
 
-            const fullPath = path.join(tmpDir.name, downloadedFile);
-
+            const fullPath = path.join(tmpDir.name, mergedFile);
             resolve({
               filePath: fullPath,
-              filename: downloadedFile,
+              filename: mergedFile,
               cleanup: tmpDir.removeCallback,
             });
           });
