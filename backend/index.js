@@ -170,29 +170,7 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
       let isAudioOnly = false;
 
       // FACEBOOK
-      if (url.includes("facebook.com")) {
-        if (quality) {
-          args.push("-f", quality);
-        } else {
-          args.push("-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best");
-        }
-        args.push(
-          "--user-agent",
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        );
-        args.push("--add-header", "Accept-Language: en-US,en;q=0.9");
-
-        if (!cookiesFile) {
-          logFlush(
-            "[Facbook] No cookies file found. If you see errors, please upload an up-to-date cookies.txt from your browser."
-          );
-        }
-
-        // Use only merge output format, no recode-video for Facebook
-        args.push("--merge-output-format", "mp4");
-        // remove args.push("--recode-video", "mp4");
-      }
-
+     
       // X / Twitter
       else if (url.includes("x.com") || url.includes("twitter.com")) {
         args.push("-f", "bestvideo*+bestaudio/best");
