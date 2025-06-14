@@ -182,6 +182,10 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
           "-f",
           "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
         );
+
+        // Use only merge output format, no recode-video for Facebook
+        args.push("--merge-output-format", "mp4");
+        // remove args.push("--recode-video", "mp4");
       }
 
       // X / Twitter
@@ -242,7 +246,8 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
         args.push("--recode-video", "mp4");
       }
 
-      args.push("-o", `${safeFilename}.%(ext)s`);
+      args.push("-o", path.join(tmpDir.name, `${safeFilename}.%(ext)s`));
+
       args.push(url);
 
       logFlush("[yt-dlp final args]:", args.join(" "));
@@ -349,7 +354,6 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
   }
 }
 
-
 // API: download video (or metadata if no quality specified)
 app.post(
   "/api/downloads",
@@ -357,15 +361,13 @@ app.post(
     body("url")
       .custom(isValidVideoUrl)
       .withMessage("Invalid or unsupported video URL."),
-    body("quality").optional().isString().isLength({ max: 50 }), // Allow longer format_id
+    body("quality").optional().isString().isLength({ max: 50 }),
     body("downloadId").optional().isString().isLength({ max: 64 }),
   ],
   async (req, res) => {
-    // Log request body for debugging
     console.log("/api/downloads request body:", req.body);
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      // Log validation errors for debugging
       console.error("/api/downloads validation errors:", errors.array());
       return res.status(400).json({ error: errors.array()[0].msg });
     }
@@ -375,9 +377,6 @@ app.post(
     try {
       const cookiesFile = getCookiesFile(url);
 
-      // REMOVED cookies check to allow fetching without cookies for public videos
-
-      // If quality not specified, return metadata (playlist or single)
       if (!quality) {
         const args = cookiesFile
           ? [
@@ -393,23 +392,17 @@ app.post(
         const info = JSON.parse(infoJson);
 
         if (Array.isArray(info.entries)) {
-          // Playlist detected: fetch full info per video
           const videos = await Promise.all(
             info.entries.map(async (v) => {
-              // Use url from entry or build youtube url fallback
               const videoUrl =
                 v.url || `https://www.youtube.com/watch?v=${v.id}`;
-
               const fullInfoArgs = cookiesFile
                 ? ["--cookies", cookiesFile, "--dump-single-json", videoUrl]
                 : ["--dump-single-json", videoUrl];
-
               const fullInfoJson = await ytDlpWrap.execPromise(fullInfoArgs);
               const fullInfo = JSON.parse(fullInfoJson);
 
-              // --- Thumbnail robust extraction ---
               let thumbnail = fullInfo.thumbnail || null;
-              // Fallback: use first HTTPS thumbnail from thumbnails array
               if (
                 (!thumbnail || !/^https:/.test(thumbnail)) &&
                 Array.isArray(fullInfo.thumbnails)
@@ -436,8 +429,6 @@ app.post(
             videos,
           });
         } else {
-          // Single video metadata
-          // --- Thumbnail robust extraction for single video ---
           let singleInfo = info;
           let thumbnail = singleInfo.thumbnail || null;
           if (
@@ -454,7 +445,6 @@ app.post(
         }
       }
 
-      // Download with progress emitting
       const { filePath, filename, cleanup } = await downloadWithProgress({
         url,
         quality,
@@ -462,7 +452,34 @@ app.post(
         io,
       });
 
+      if (!fs.existsSync(filePath)) {
+        console.error("Downloaded file missing:", filePath);
+        cleanup();
+        return res.status(500).send("Download failed: File not found");
+      }
+
       const stat = fs.statSync(filePath);
+
+      if (stat.size < 50 * 1024) {
+        const fileContent = fs.readFileSync(filePath, "utf8");
+        cleanup();
+        return res
+          .status(500)
+          .send(
+            `Download failed: File too small. Possibly an error page.\n\nFirst 500 chars:\n${fileContent.slice(
+              0,
+              500
+            )}`
+          );
+      }
+
+      const header = fs.readFileSync(filePath, { start: 0, end: 16 });
+      const hexHeader = header.toString("hex");
+      if (!hexHeader.includes("66747970")) {
+        console.error("Invalid MP4 file — missing 'ftyp' marker:", hexHeader);
+        cleanup();
+        return res.status(500).send("Download failed: Not a valid MP4 video.");
+      }
 
       res.writeHead(200, {
         "Content-Type": "video/mp4",
@@ -472,29 +489,23 @@ app.post(
 
       const stream = fs.createReadStream(filePath);
       let bytesSent = 0;
-      let lastEmit = Date.now();
-      let lastBytes = 0;
       const totalSize = stat.size;
 
       stream.on("data", (chunk) => {
         bytesSent += chunk.length;
         const percent = (bytesSent / totalSize) * 100;
         if (downloadId) {
-          io.to(downloadId).emit("progress", {
-            percent,
-          });
+          io.to(downloadId).emit("progress", { percent });
         }
       });
-      // Emit final progress with last speed and percent=100 when stream ends
+
       stream.on("end", () => {
         if (downloadId) {
-          io.to(downloadId).emit("progress", {
-            percent: 100,
-          });
+          io.to(downloadId).emit("progress", { percent: 100 });
         }
       });
-      stream.pipe(res);
 
+      stream.pipe(res);
       stream.on("close", cleanup);
       stream.on("error", (err) => {
         console.error("Stream error:", err);
@@ -504,24 +515,20 @@ app.post(
     } catch (err) {
       console.error("Failed at /api/downloads with URL:", req.body.url);
       console.error("Error details:", err.stderr || err.message || err);
-      // Platform-specific error handling
       const errMsg = (err && (err.stderr || err.message || "")).toString();
-      // Instagram
+
       if (
         /instagram/i.test(errMsg) &&
         /login required|rate-limit reached|not available|use --cookies|Main webpage is locked behind the login page|unable to extract shared data/i.test(
           errMsg
         )
       ) {
-        // Log the full yt-dlp error for debugging
-        console.error("[Instagram 403] yt-dlp error details:", errMsg);
         return res.status(403).json({
           error:
             "Instagram requires login/cookies to download this video. Please log in and provide cookies, or try a different public video.",
           details: errMsg,
         });
       }
-      // Facebook
       if (
         /facebook/i.test(errMsg) &&
         /login required|not available|cookies/i.test(errMsg)
@@ -532,7 +539,6 @@ app.post(
           details: errMsg,
         });
       }
-      // TikTok
       if (
         /tiktok/i.test(errMsg) &&
         /login required|not available|cookies|forbidden|403/i.test(errMsg)
@@ -543,7 +549,6 @@ app.post(
           details: errMsg,
         });
       }
-      // YouTube
       if (
         /youtube|youtu\.be/i.test(errMsg) &&
         (/login required|not available|cookies|This video is private|sign in|429|Too Many Requests|quota exceeded|rate limit/i.test(
