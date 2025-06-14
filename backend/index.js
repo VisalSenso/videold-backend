@@ -164,7 +164,13 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
 
       // FACEBOOK
       if (url.includes("facebook.com")) {
-       args.push("-f", "bestvideo*+bestaudio/best");
+      console.log("[yt-dlp] Detected Facebook URL");
+        args.push(
+          "-f",
+          "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best",
+          "--add-header",
+          "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/"
+        )
       }
 
       // X / Twitter
