@@ -142,11 +142,18 @@ function isValidVideoUrl(url) {
 }
 
 // Download helper with socket.io progress emit
+function logFlush(...args) {
+  console.log(...args);
+  process.stdout.write(""); // flush logs immediately
+}
+
 async function downloadWithProgress({ url, quality, downloadId, io }) {
   const tmpDir = tmp.dirSync({ unsafeCleanup: true });
 
   try {
     const cookiesFile = getCookiesFile(url);
+    logFlush("Cookies file path:", cookiesFile);
+    logFlush("Cookies file exists:", fs.existsSync(cookiesFile));
 
     const infoArgs = ["--no-playlist"];
     if (cookiesFile) infoArgs.push("--cookies", cookiesFile);
@@ -164,11 +171,11 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
 
       // FACEBOOK
       if (url.includes("facebook.com")) {
-        console.log("Facebook download detected");
+        logFlush("Facebook download detected");
         if (cookiesFile) {
-          console.log("Using cookies file:", cookiesFile);
+          logFlush("Using cookies file:", cookiesFile);
         } else {
-          console.warn("⚠️ No Facebook cookies file found — this may fail.");
+          logFlush("⚠️ No Facebook cookies file found — this may fail.");
         }
 
         args.push(
@@ -181,6 +188,7 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
       else if (url.includes("x.com") || url.includes("twitter.com")) {
         args.push("-f", "bestvideo*+bestaudio/best");
       }
+
       // INSTAGRAM
       else if (url.includes("instagram.com")) {
         if (quality) {
@@ -195,11 +203,12 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
         args.push("--add-header", "Accept-Language: en-US,en;q=0.9");
 
         if (!cookiesFile) {
-          console.warn(
+          logFlush(
             "[Instagram] No cookies file found. If you see errors, please upload an up-to-date cookies.txt from your browser."
           );
         }
       }
+
       // YOUTUBE / DEFAULT
       else if (quality) {
         const selectedFormat = (info.formats || []).find(
@@ -212,7 +221,6 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
           selectedFormat.acodec &&
           selectedFormat.acodec !== "none"
         ) {
-          // Audio-only
           isAudioOnly = true;
           args.push("-f", quality);
         } else if (
@@ -220,31 +228,24 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
           selectedFormat.vcodec &&
           selectedFormat.acodec === "none"
         ) {
-          // Video-only
           args.push("-f", `${quality}+bestaudio[acodec^=mp4a]/best`);
         } else {
           args.push("-f", quality);
         }
       } else {
-        // Default fallback
         args.push("-f", "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
       }
 
-      // Apply merge/recode only if needed
       const needsMerging = !isAudioOnly;
       if (needsMerging) {
-        if (!args.includes("--merge-output-format")) {
-          args.push("--merge-output-format", "mp4");
-        }
-        if (!args.includes("--recode-video")) {
-          args.push("--recode-video", "mp4");
-        }
+        args.push("--merge-output-format", "mp4");
+        args.push("--recode-video", "mp4");
       }
 
       args.push("-o", `${safeFilename}.%(ext)s`);
       args.push(url);
 
-      console.log("[yt-dlp final args]:", args.join(" "));
+      logFlush("[yt-dlp final args]:", args.join(" "));
 
       let triedFallback = false;
 
@@ -260,13 +261,13 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
             }
           })
           .on("stdout", (data) => {
-            console.log(`[yt-dlp stdout] ${data}`);
+            logFlush(`[yt-dlp stdout] ${data}`);
           })
           .on("stderr", (data) => {
-            console.error(`[yt-dlp stderr] ${data}`);
+            logFlush(`[yt-dlp stderr] ${data}`);
           })
           .on("error", (err) => {
-            console.error("yt-dlp error:", err);
+            logFlush("yt-dlp error:", err);
             if (
               !triedFallback &&
               !url.includes("facebook.com") &&
@@ -301,9 +302,19 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
 
             const fullPath = path.join(tmpDir.name, downloadedFile);
             const ext = path.extname(downloadedFile).toLowerCase();
-            const fileHeader = fs
-              .readFileSync(fullPath, { encoding: "utf8", flag: "r" })
-              .slice(0, 100);
+
+            const stats = fs.statSync(fullPath);
+            logFlush("Downloaded file size (bytes):", stats.size);
+
+            let fileHeader = "";
+            try {
+              fileHeader = fs
+                .readFileSync(fullPath, { encoding: "utf8", flag: "r" })
+                .slice(0, 300);
+              logFlush("First 300 characters of file:", fileHeader);
+            } catch (e) {
+              logFlush("Unable to read file header as text — possibly binary.");
+            }
 
             const isProbablyHtml =
               fileHeader.includes("<!DOCTYPE html") ||
@@ -337,6 +348,7 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
     throw err;
   }
 }
+
 
 // API: download video (or metadata if no quality specified)
 app.post(
