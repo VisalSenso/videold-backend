@@ -164,17 +164,7 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
 
       // FACEBOOK
       if (url.includes("facebook.com")) {
-        console.log("Facebook download detected");
-        if (cookiesFile) {
-          console.log("Using cookies file:", cookiesFile);
-        } else {
-          console.warn("⚠️ No Facebook cookies file found — this may fail.");
-        }
-
-        args.push(
-          "-f",
-          "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
-        );
+       args.push("-f", "bestvideo*+bestaudio/best");
       }
 
       // X / Twitter
