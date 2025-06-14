@@ -169,9 +169,11 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
       // Handle format
       if (url.includes("facebook.com")) {
         // Always use best H.264 video + AAC audio for Facebook for compatibility
-        args.push("-f", "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
+        args.push(
+          "-f",
+          "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+        );
         args.push("--merge-output-format", "mp4");
-        args.push("--recode-video", "mp4");
       } else if (url.includes("x.com") || url.includes("twitter.com")) {
         // For X (Twitter), let yt-dlp pick and merge best video+audio (no recode)
         args.push("-f", "bestvideo*+bestaudio/best");
@@ -360,54 +362,6 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
     throw err;
   }
 }
-
-// API: initialize download, return formats + downloadId + filename
-app.post(
-  "/api/init-download",
-  body("url")
-    .custom(isValidVideoUrl)
-    .withMessage("Invalid or unsupported video URL."),
-  async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ error: errors.array()[0].msg });
-    }
-
-    try {
-      const { url } = req.body;
-      const cookiesFile = getCookiesFile(url);
-
-      // REMOVED cookies check to allow fetching without cookies for public videos
-
-      // Fetch video info with cookies if available
-      const args = cookiesFile
-        ? ["--no-playlist", "--cookies", cookiesFile, url]
-        : ["--no-playlist", url];
-
-      const info = await ytDlpWrap.getVideoInfo(args);
-      const filename = sanitizeFilename(info.title || "video");
-
-      // Filter formats with URLs (exclude dash, live etc. if desired)
-      // Filter formats with playable video and exclude AV1
-      const formats = (info.formats || []).filter(
-        (f) => f.url && (!f.vcodec || !f.vcodec.includes("av01"))
-      );
-
-      res.json({
-        downloadId: uuidv4(),
-        filename,
-        formats,
-      });
-    } catch (err) {
-      console.error("Init download error:", err);
-      res.status(500).json({ error: "Failed to get video info" });
-    }
-  }
-);
-
-app.get("/api/ping", (req, res) => {
-  res.send("Backend is alive!");
-});
 
 // API: download video (or metadata if no quality specified)
 app.post(
@@ -617,6 +571,50 @@ app.post(
         });
       }
       res.status(500).json({ error: "Download failed", details: err.message });
+    }
+  }
+);
+
+// API: initialize download, return formats + downloadId + filename
+app.post(
+  "/api/init-download",
+  body("url")
+    .custom(isValidVideoUrl)
+    .withMessage("Invalid or unsupported video URL."),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: errors.array()[0].msg });
+    }
+
+    try {
+      const { url } = req.body;
+      const cookiesFile = getCookiesFile(url);
+
+      // REMOVED cookies check to allow fetching without cookies for public videos
+
+      // Fetch video info with cookies if available
+      const args = cookiesFile
+        ? ["--no-playlist", "--cookies", cookiesFile, url]
+        : ["--no-playlist", url];
+
+      const info = await ytDlpWrap.getVideoInfo(args);
+      const filename = sanitizeFilename(info.title || "video");
+
+      // Filter formats with URLs (exclude dash, live etc. if desired)
+      // Filter formats with playable video and exclude AV1
+      const formats = (info.formats || []).filter(
+        (f) => f.url && (!f.vcodec || !f.vcodec.includes("av01"))
+      );
+
+      res.json({
+        downloadId: uuidv4(),
+        filename,
+        formats,
+      });
+    } catch (err) {
+      console.error("Init download error:", err);
+      res.status(500).json({ error: "Failed to get video info" });
     }
   }
 );
