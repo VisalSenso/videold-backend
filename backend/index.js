@@ -13,7 +13,6 @@ const archiver = require("archiver");
 const rateLimit = require("express-rate-limit");
 const { body, validationResult } = require("express-validator");
 const os = require("os");
-// Use node-fetch import compatible with most Node.js environments
 let fetch;
 try {
   fetch = require("node-fetch").default;
@@ -23,26 +22,22 @@ try {
 }
 
 const isWindows = os.platform() === "win32";
-
 const ytDlpPath = isWindows
   ? path.resolve(__dirname, "bin", "yt-dlp.exe")
   : path.resolve(__dirname, "bin", "yt-dlp");
-
 const ytDlpWrap = new YtDlpWrap(ytDlpPath);
 
 const app = express();
-// Keep only if you're behind a proxy like Render or NGINX
 app.set("trust proxy", 1);
 
 const PORT = process.env.PORT || 3000;
-
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: [
       "https://videodl.netlify.app",
       "http://localhost:5173",
-      "*", // Allow all origins for maximum compatibility
+      "*",
     ],
     credentials: true,
   },
