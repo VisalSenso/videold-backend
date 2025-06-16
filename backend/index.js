@@ -201,9 +201,9 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
             "[Instagram] No cookies file found. Some public videos may require login. If you see errors, please provide an up-to-date cookies file from your browser."
           );
         }
-      } else if (quality) {
+      } else if (url.includes("youtube.com") || url.includes("youtu.be")) {
         // For YouTube: always use the user-selected format, merging with bestaudio if video-only
-        if (url.includes("youtube.com") || url.includes("youtu.be")) {
+        if (quality) {
           const selectedFormat = (info.formats || []).find(
             (f) => f.format_id === quality
           );
@@ -236,6 +236,11 @@ async function downloadWithProgress({ url, quality, downloadId, io }) {
           args.push("--merge-output-format", "mp4");
           args.push("--recode-video", "mp4");
         }
+        // Add browser-like user-agent for YouTube
+        args.push(
+          "--user-agent",
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        );
       } else {
         // Default: best H.264 video + AAC audio, fallback to best
         args.push("-f", "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best");
@@ -444,6 +449,21 @@ app.post(
 
     try {
       const cookiesFile = getCookiesFile(url);
+
+      // Add these debug logs:
+      console.log("yt-dlp path:", ytDlpPath);
+      console.log(
+        "yt-dlp args:",
+        cookiesFile
+          ? ["--no-playlist", "--cookies", cookiesFile, url]
+          : ["--no-playlist", url]
+      );
+      console.log("process.cwd():", process.cwd());
+      console.log("__dirname:", __dirname);
+      console.log(
+        "cookies file exists:",
+        cookiesFile ? fs.existsSync(cookiesFile) : false
+      );
 
       // REMOVED cookies check to allow fetching without cookies for public videos
 
@@ -818,6 +838,22 @@ app.use(express.static(path.join(__dirname, "../video-downloader/dist")));
 
 app.get(/^\/(?!api\/).*/, (req, res) => {
   res.sendFile(path.join(__dirname, "../video-downloader/dist/index.html"));
+});
+
+// Add this to your backend for a quick test
+app.get("/api/yt-test", async (req, res) => {
+  const url = "https://www.youtube.com/shorts/B1VBk-DRJik";
+  const cookiesFile = getCookiesFile(url);
+  const args = cookiesFile
+    ? ["--cookies", cookiesFile, url]
+    : [url];
+  console.log("yt-dlp test args:", args);
+  try {
+    const result = await ytDlpWrap.execPromise(args);
+    res.send(result);
+  } catch (err) {
+    res.status(500).send(err.stderr || err.message || "yt-dlp failed");
+  }
 });
 
 // Start the server
