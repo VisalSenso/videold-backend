@@ -34,11 +34,7 @@ const PORT = process.env.PORT || 3000;
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: [
-      "https://videodl.netlify.app",
-      "http://localhost:5173",
-      "*",
-    ],
+    origin: ["https://videodl.netlify.app", "http://localhost:5173", "*"],
     credentials: true,
   },
 });
@@ -96,10 +92,8 @@ function getCookiesFile(url) {
     }
   }
 
-   if (/youtube\.com/i.test(url) || /youtu\.be/i.test(url)) {
+  if (/youtube\.com/i.test(url) || /youtu\.be/i.test(url)) {
     const file = path.join(__dirname, "youtube.com_cookies.txt");
-    console.log("[YouTube] __dirname:", __dirname);
-    console.log("[YouTube] process.cwd():", process.cwd());
     console.log("[YouTube] Checking for cookies file at:", file);
     if (fs.existsSync(file)) {
       console.log("[YouTube] Using cookies file:", file);
@@ -620,7 +614,20 @@ app.post(
         });
       }
       // YouTube
-      
+      if (
+        /youtube/i.test(errMsg) &&
+        (/cookies/i.test(errMsg) ||
+          /sign in/i.test(errMsg) ||
+          /429/i.test(errMsg) ||
+          /confirm you’re not a bot/i.test(errMsg))
+      ) {
+        return res.status(403).json({
+          error:
+            "YouTube requires valid cookies or is rate-limiting you. Please update your cookies file or try again later. See https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies for help.",
+          details: errMsg,
+        });
+      }
+
       res.status(500).json({ error: "Download failed", details: err.message });
     }
   }
