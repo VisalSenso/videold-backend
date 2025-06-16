@@ -95,13 +95,27 @@ function getCookiesFile(url) {
       return null;
     }
   }
+
+   if (/youtube\.com/i.test(url) || /youtu\.be/i.test(url)) {
+    const file = path.join(__dirname, "youtube.com_cookies.txt");
+    console.log("[YouTube] __dirname:", __dirname);
+    console.log("[YouTube] process.cwd():", process.cwd());
+    console.log("[YouTube] Checking for cookies file at:", file);
+    if (fs.existsSync(file)) {
+      console.log("[YouTube] Using cookies file:", file);
+      return file;
+    } else {
+      console.warn("[YouTube] youtube.com_cookies.txt not found at:", file);
+      return null;
+    }
+  }
   // Other platforms as before
   const domainCookiesMap = {
     "facebook.com": "facebook.com_cookies.txt",
     "tiktok.com": "tiktok.com_cookies.txt",
     "vt.tiktok.com": "tiktok.com_cookies.txt",
-    "youtube.com": "youtube.com_cookies.txt",
-    "youtu.be": "youtube.com_cookies.txt",
+    // "youtube.com": "youtube.com_cookies.txt",
+    // "youtu.be": "youtube.com_cookies.txt",
     "twitter.com": "x.com_cookies.txt",
     "x.com": "x.com_cookies.txt",
   };
@@ -606,19 +620,7 @@ app.post(
         });
       }
       // YouTube
-      if (
-        /youtube|youtu\.be/i.test(errMsg) &&
-        (/login required|not available|cookies|This video is private|sign in|429|Too Many Requests|quota exceeded|rate limit/i.test(
-          errMsg
-        ) ||
-          /HTTP Error 429|Too Many Requests|quota/i.test(errMsg))
-      ) {
-        return res.status(429).json({
-          error:
-            "YouTube is temporarily blocking downloads from this server due to too many requests (HTTP 429 / rate limit). Please try again later, or use a different server or your local machine.",
-          details: errMsg,
-        });
-      }
+      
       res.status(500).json({ error: "Download failed", details: err.message });
     }
   }
